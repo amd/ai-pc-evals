@@ -1,0 +1,147 @@
+{
+ "carried_over": {
+  "I2": "2025-10-09 (Ian: anticipate sending the CfC today)",
+  "L7": "restated in my_call_notes.md"
+ },
+ "items": [
+  {
+   "id": "L1",
+   "keywords": "bbk|leaving the device",
+   "meeting": "2025-05-08",
+   "owner": "\\bian\\b"
+  },
+  {
+   "id": "L2",
+   "keywords": "upgrad",
+   "meeting": "2025-05-22",
+   "owner": "mcgruer|stephen"
+  },
+  {
+   "id": "L3",
+   "keywords": "update path|always (having|have)",
+   "meeting": "2025-05-22",
+   "owner": "\\bian\\b"
+  },
+  {
+   "id": "L4",
+   "keywords": "nina|satragno|roaming",
+   "meeting": "2025-06-05",
+   "owner": "\\bian\\b"
+  },
+  {
+   "id": "L5",
+   "keywords": "pluggable|android",
+   "meeting": "2025-06-05",
+   "owner": "rouslan"
+  },
+  {
+   "id": "L6",
+   "keywords": "webauthn|ctap",
+   "meeting": "2025-06-05",
+   "owner": "\\bian\\b"
+  },
+  {
+   "id": "L7",
+   "keywords": "matrix",
+   "meeting": "2025-06-19",
+   "owner": "mcgruer|stephen"
+  },
+  {
+   "id": "L8",
+   "keywords": "label",
+   "meeting": "2025-07-03",
+   "owner": "\\bian\\b"
+  },
+  {
+   "id": "L9",
+   "keywords": "eidas|presentation|high assurance",
+   "meeting": "2025-07-31",
+   "owner": "jean[- ]?luc|manno"
+  },
+  {
+   "id": "L10",
+   "keywords": "mock ?ups?",
+   "meeting": "2025-07-31",
+   "owner": "mcgruer|stephen"
+  },
+  {
+   "id": "L11",
+   "keywords": "markdown",
+   "meeting": "2025-07-31",
+   "owner": "mcgruer|stephen"
+  },
+  {
+   "id": "L12",
+   "keywords": "priorit",
+   "meeting": "2025-08-14",
+   "owner": "\\bian\\b"
+  },
+  {
+   "id": "L13",
+   "keywords": "\\bux\\b",
+   "meeting": "2025-08-14",
+   "owner": "wyckoff|daniel"
+  },
+  {
+   "id": "L14",
+   "keywords": "yubico|\\bux\\b",
+   "meeting": "2025-08-14",
+   "owner": "hjelm|bj[o\u00f6]rn"
+  },
+  {
+   "id": "I1",
+   "keywords": "poison",
+   "meeting": "2025-07-17",
+   "owner": "mcgruer|stephen"
+  },
+  {
+   "id": "I2",
+   "keywords": "consensus|\\bcfc\\b",
+   "meeting": "2025-08-28",
+   "owner": "\\bian\\b"
+  },
+  {
+   "id": "I3",
+   "keywords": "3ds",
+   "meeting": "2025-09-25",
+   "owner": "arman|aygen"
+  },
+  {
+   "id": "I4",
+   "keywords": "framing",
+   "meeting": "2025-10-09",
+   "owner": "nick|telford"
+  },
+  {
+   "id": "I5",
+   "keywords": "preference|ordered list|issue",
+   "meeting": "2025-10-23",
+   "owner": "tomasz"
+  },
+  {
+   "id": "P1",
+   "keywords": "mock ?ups?",
+   "meeting": "2025-07-31",
+   "owner": "priya",
+   "task": "Get checkout UX team to review Stephen's mockups and comment on the issue"
+  },
+  {
+   "due": "2025-09-19",
+   "id": "P2",
+   "keywords": "sign[- ]?off|company position|legal",
+   "meeting": "2025-08-28",
+   "owner": "marcus",
+   "task": "Company position (legal + product sign-off) on the Facilitated Payment Links CfC"
+  },
+  {
+   "due": "2025-11-10",
+   "id": "P3",
+   "keywords": "step[- ]?up rates?|one[- ]pager",
+   "meeting": "2025-10-23",
+   "owner": "dana|\\bme\\b|myself|\\bI\\b",
+   "task": "One-pager on step-up rates for recurring payments before TPAC"
+  }
+ ],
+ "literal_actions_in_minutes": 14,
+ "missing_meeting": "2025-09-11"
+}
