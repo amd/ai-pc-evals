@@ -145,9 +145,9 @@ def test_maintainer_folders_are_skipped_unless_strict(env):
 
 def test_time_box(env):
     (env["home"] / "Documents" / "x.txt").write_text("x", encoding="utf-8")
-    loose = run(env, time_limit=0)
+    loose = run(env, time_limit=-1)  # a deadline already past, whatever the clock resolution
     assert loose.ok and loose.incomplete
-    strict = run(env, time_limit=0, strict=True)
+    strict = run(env, time_limit=-1, strict=True)
     assert not strict.ok and "INCOMPLETE" in strict.render()
 
 
