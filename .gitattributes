@@ -1,3 +1,10 @@
+* text=auto
+# Bash rejects CRLF scripts ($'\r': command not found); keep them LF on every checkout.
+*.sh text eol=lf
+*.py text eol=lf
+# cmd.exe mis-parses labels and blocks in LF batch files.
+*.bat text eol=crlf
+*.cmd text eol=crlf
 # Hashed by secrets/manifest.json: keep their bytes identical on every checkout.
 secrets/answers.enc binary
 secrets/manifest.json -text

@@ -1,19 +1,21 @@
 #!/bin/bash
 # Build a release-shaped GAIA from the integration worktree:
-#   1. reset int/bulletproof to origin/main and merge the given fix branches
+#   1. reset $GAIA_INT_WORKTREE to origin/main and merge the given fix branches
 #   2. freeze gaia-agent.exe exactly as build_flagship_sidecar.yml does
 #   3. build gaia-tui.exe
 #   4. install the same core into venv-local for the daemon
-# usage: build_local.sh [branch ...]
+# usage: build_local.sh [--no-reset] [branch ...]
+#   --no-reset  build on the worktree's current HEAD instead of resetting it to origin/main
 set -euo pipefail
 INT="${GAIA_INT_WORKTREE:?set GAIA_INT_WORKTREE to an amd/gaia worktree used for integration builds}"
 EVAL_HOME="${GAIA_TUI_EVAL_HOME:-$HOME/gaia-tui-eval}"
 OUT="$EVAL_HOME/bin-local"
 cd "$INT"
-if [ "${1:-}" = "--no-reset" ]; then shift; set --; else
-git fetch -q origin
-git reset -q --hard origin/main
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "ERROR: $INT has uncommitted changes; commit or move them before an integration build" >&2; exit 2
 fi
+git fetch -q origin
+if [ "${1:-}" = "--no-reset" ]; then shift; else git reset -q --hard origin/main; fi
 for b in "$@"; do
   if ! git merge -q --no-edit "origin/$b"; then
     if [ -n "${RESOLVE_SCRIPT:-}" ] && python "$RESOLVE_SCRIPT" && git commit -q --no-edit; then echo "auto-resolved $b"; else echo "MERGE CONFLICT on $b"; git merge --abort; exit 3; fi

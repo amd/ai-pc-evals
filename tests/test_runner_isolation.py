@@ -43,6 +43,10 @@ def test_bat_clears_secrets_and_sets_allowed_paths_before_starting_the_tui():
 def run_task(monkeypatch, tmp_path):
     monkeypatch.setenv("GAIA_TUI_EVAL_HOME", str(tmp_path / "tui"))
     (tmp_path / "tui" / "state" / "tui-tasks").mkdir(parents=True)
+    (tmp_path / "tui" / "bin").mkdir()
+    (tmp_path / "tui" / "bin" / "gaia-tui.exe").write_bytes(b"")
+    (tmp_path / "tui" / "venv").mkdir()
+    monkeypatch.setenv("GAIA_TEST_BUILD", "rc12")
     import importlib
     import run_task as rt
 
@@ -74,9 +78,11 @@ def test_launch_gives_the_window_no_passphrase(run_task, monkeypatch, tmp_path, 
     assert SECRET not in json.dumps(seen)
     assert keys.PASSPHRASE_ENV not in seen["env"]
     assert seen["env"]["GAIA_ALLOWED_PATHS"] == str(folder)
-    assert (tmp_path / "tui" / "run-task.bat").read_text(encoding="utf-8") == BAT.read_text(encoding="utf-8")
     if user:
         assert seen["argv"][:3] == ["runas", "/savecred", f"/user:{user}"]
+        # the other user cannot read this repo, so it runs a fresh copy of the bat
+        copy = tmp_path / "tui" / "run-task.bat"
+        assert copy.read_bytes() == BAT.read_bytes() and str(copy) in seen["argv"][3]
 
 
 @pytest.fixture()

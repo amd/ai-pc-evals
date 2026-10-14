@@ -4,11 +4,12 @@ usage: python md2pdf.py <in.md> <out.pdf>
 """
 import html
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+CHROME = os.environ.get("CHROME_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 src, out = Path(sys.argv[1]), Path(sys.argv[2])
 cover = "" if "--no-cover" in sys.argv else '<div class="cover">Internal evaluation document. Contains answer-key values.</div>'
 md = src.read_text(encoding="utf-8")
@@ -57,6 +58,8 @@ document.getElementById('doc').innerHTML = marked.parse(md, {{ renderer, gfm: tr
 </script></body></html>"""
 html_path = out.with_suffix(".html")
 html_path.write_text(page, encoding="utf-8")
+if not Path(CHROME).is_file():
+    sys.exit(f"ERROR: Chrome not found at {CHROME}; set CHROME_PATH to chrome.exe (or msedge.exe)")
 subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
                 "--virtual-time-budget=15000", f"--print-to-pdf={out}", html_path.resolve().as_uri()],
                check=True, capture_output=True, timeout=120)
