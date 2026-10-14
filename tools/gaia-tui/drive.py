@@ -1,4 +1,4 @@
-"""Drive the rc12 TUI over its loopback control API.
+"""Drive the GAIA TUI over its loopback control API.
 
 usage: python drive.py status | screen | resize C R | keys k1 k2 ... | text "..." |
        wait '<json condition>' [timeout_s] | ask "<prompt>" [timeout_s] | svg out.svg
@@ -14,8 +14,18 @@ from pathlib import Path
 CTL = Path(os.environ.get("GAIA_TUI_EVAL_HOME", Path.home() / "gaia-tui-eval")) / "state" / "tui-tasks" / "control.json"
 
 
+def _control():
+    try:
+        return json.loads(CTL.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"No TUI control file at {CTL}. Start a task window first (run_task.py), "
+            "or set GAIA_TUI_EVAL_HOME to the folder the TUI was launched with."
+        ) from None
+
+
 def _call(method, path, body=None, raw=False, timeout=60):
-    c = json.loads(CTL.read_text())
+    c = _control()
     req = urllib.request.Request(
         f"http://127.0.0.1:{c['port']}/control/v1/{path}",
         method=method,
