@@ -1,0 +1,47 @@
+# Data and results are never committed: inputs download on demand, results are per machine.
+fixtures/
+**/fixtures/
+pinned_cache/
+cache/
+runs/
+results/
+report/
+recordings/
+attempts/
+sysmon/
+state/
+*.mp4
+*.mkv
+*.gif
+
+# Ground truth stays out of the repo and away from any agent under test.
+answer-keys/
+kw-keys/
+
+# Binaries and builds
+bin/
+bin-local/
+venv/
+venv-local/
+.venv*/
+dist/
+build/
+*.exe
+*.AppImage
+*.dll
+*.whl
+
+# Downloaded or generated documents
+*.pdf
+*.xlsx
+*.docx
+*.pptx
+*.zip
+*.tar.gz
+
+# Python / editor noise
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+Thumbs.db
