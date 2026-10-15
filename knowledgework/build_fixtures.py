@@ -717,7 +717,11 @@ def write_sources_md(
     lines += ["", "## Derived and planted", "", derived.strip(), ""]
     out = HERE / "sources" / f"{task}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    text = "\n".join(lines)
+    # Rewrite only on a real change: a CRLF Windows checkout of the same note must stay untouched, or every
+    # eval run would mark the framework as modified.
+    if not out.is_file() or out.read_text(encoding="utf-8").replace("\r\n", "\n") != text:
+        out.write_text(text, encoding="utf-8", newline="\n")
 
 
 def read_text_any(path: Path) -> str:
