@@ -1,13 +1,19 @@
 # Contributing
 
-Every change goes through a pull request against `main`; nobody pushes to `main` directly and nobody force-pushes. CI runs `pytest` on Ubuntu and Windows, and a PR merges once that is green and a maintainer has reviewed it.
+Every change goes through a pull request against `main`; nobody pushes to `main` directly and nobody force-pushes. CI runs two workflows, and a PR merges once both are green and a maintainer has reviewed it:
+
+- **tests**: `pytest` on Ubuntu and Windows with Python 3.12 and 3.13, including `tests/test_task_data.py`, which checks every task file against `knowledgework/SCHEMA.md` and the fixture builder.
+- **lint**: `ruff` (undefined names, unused code), `shellcheck`, valid JSON, PowerShell parsing, and line endings on a Windows checkout.
 
 Before opening one:
 
 ```bash
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
+python -m ruff check .
 ```
+
+`shellcheck` runs in CI only, unless you have it installed (`pip install shellcheck-py`).
 
 Changes to ground truth need extra care, because every recorded result was graded against the old version:
 

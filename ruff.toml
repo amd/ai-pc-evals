@@ -1,0 +1,6 @@
+# Errors only: undefined names, unused imports/locals and syntax errors. Style is left alone.
+target-version = "py312"
+extend-exclude = ["**/__pycache__"]
+
+[lint]
+select = ["F", "E9"]

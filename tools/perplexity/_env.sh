@@ -1,4 +1,5 @@
 # Shared setup for the Perplexity helpers. Sourced by each script, never run on its own.
+# shellcheck shell=bash disable=SC2034  # REPO and PY are used by the scripts that source this file
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 KW_HOME="${GAIA_KW_EVAL_HOME:-$HOME/gaia-kw-eval}"
