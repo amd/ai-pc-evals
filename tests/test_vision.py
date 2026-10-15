@@ -49,6 +49,12 @@ def test_unknown_types_and_missing_files_fail_clearly(tmp_path):
         render.render(tmp_path / "nope.pptx", tmp_path / "out")
 
 
+def test_text_saved_as_docx_is_rejected_before_office_sees_it(tmp_path):
+    (tmp_path / "brief.docx").write_text("just text", encoding="utf-8")
+    with pytest.raises(render.RenderError, match="not a real .docx file"):
+        render.render(tmp_path / "brief.docx", tmp_path / "out")
+
+
 def test_backend_choice(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
     assert render.pick_backend("auto") == "office"

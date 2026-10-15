@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 OFFICE = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xlsm", ".xls"}
@@ -93,6 +94,8 @@ def to_pdf(src: Path, work: Path, backend: str) -> Path:
         _run([CHROME, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
               f"--print-to-pdf={pdf}", src.resolve().as_uri()], "Chrome print-to-pdf")
     elif suffix in OFFICE:
+        if suffix in (".pptx", ".docx", ".xlsx", ".xlsm") and not zipfile.is_zipfile(src):
+            raise RenderError(f"not a real {suffix} file (text saved under a {suffix} name?)")
         if pick_backend(backend) == "office":
             script = work / "export.ps1"
             script.write_text(_PS_EXPORT, encoding="utf-8")
