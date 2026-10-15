@@ -1,0 +1,30 @@
+name: release
+
+# Push a tag that matches VERSION (e.g. v0.2.0) to publish the package as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - name: Build the package
+        run: python tools/package.py --out dist --tag "$GITHUB_REF_NAME"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.sha256 \
+            --title "AI PC evals $GITHUB_REF_NAME" \
+            --notes "Eval package $GITHUB_REF_NAME. Unzip, follow README.md. Every result records this version (tools/evalversion.py). Source documents download when an eval runs."
