@@ -5,3 +5,5 @@
 # cmd.exe mis-parses labels and blocks in LF batch files.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+# Task inputs are hashed byte for byte (the baseline); never convert their line endings.
+knowledgework/fixtures/** -text
