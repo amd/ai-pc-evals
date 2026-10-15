@@ -2620,4 +2620,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except PinMismatchError as e:  # its message already says what to do; a traceback only buries it
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(2)
