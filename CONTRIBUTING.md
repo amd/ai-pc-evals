@@ -2,8 +2,8 @@
 
 Every change goes through a pull request against `main`; nobody pushes to `main` directly and nobody force-pushes. CI runs two workflows, and a PR merges once both are green and a maintainer has reviewed it:
 
-- **tests**: `pytest` on Ubuntu and Windows with Python 3.12 and 3.13, including `tests/test_task_data.py`, which checks every task file against `knowledgework/SCHEMA.md` and the fixture builder.
-- **lint**: `ruff` (undefined names, unused code), `shellcheck`, valid JSON, PowerShell parsing, and line endings on a Windows checkout.
+- **tests**: `pytest` on Ubuntu and Windows with Python 3.13, including `tests/test_task_data.py`, which checks every task file against `knowledgework/SCHEMA.md` and the fixture builder.
+- **lint**, also on Ubuntu and Windows: `ruff` (undefined names, unused code), `shellcheck`, valid JSON, PowerShell parsing, and line endings in each checkout.
 
 Before opening one:
 
@@ -11,9 +11,10 @@ Before opening one:
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 python -m ruff check .
+shellcheck -S warning $(git ls-files "*.sh")
 ```
 
-`shellcheck` runs in CI only, unless you have it installed (`pip install shellcheck-py`).
+`requirements-dev.txt` includes `ruff` and `shellcheck`, so the same checks run locally.
 
 Changes to ground truth need extra care, because every recorded result was graded against the old version:
 

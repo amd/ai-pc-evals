@@ -13,31 +13,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  static:
-    runs-on: ubuntu-latest
+  lint:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: python -m pip install ruff==0.17.1
+          python-version: "3.13"
+      - run: python -m pip install ruff==0.17.1 shellcheck-py==0.11.0.1
       - name: Python (undefined names, unused code, syntax)
         run: ruff check --output-format github .
       - name: Shell scripts
-        run: shellcheck --version && shellcheck -S warning $(git ls-files '*.sh')
-      - name: Task data is valid JSON
+        run: shellcheck -S warning $(git ls-files '*.sh')
+      - name: JSON files parse
         run: for f in $(git ls-files '*.json'); do python -m json.tool "$f" >/dev/null || { echo "::error file=$f::invalid JSON"; exit 1; }; done
       - name: Scripts are committed with LF
         run: |
           bad=$(git ls-files --eol -- '*.sh' '*.py' '*.bat' '*.cmd' '*.ps1' | grep -v '^i/lf' || true)
           if [ -n "$bad" ]; then echo "::error::committed with CRLF or mixed endings:"; echo "$bad"; exit 1; fi
-
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
+      - name: Checkout line endings follow .gitattributes
+        run: |
+          # Bash rejects CRLF scripts; cmd.exe mis-parses LF batch files.
+          bad=$( { git ls-files --eol -- '*.sh' | grep -v 'w/lf'; git ls-files --eol -- '*.bat' '*.cmd' | grep -v 'w/crlf'; } || true)
+          if [ -n "$bad" ]; then echo "::error::wrong line endings in the checkout:"; echo "$bad"; exit 1; fi
       - name: PowerShell scripts parse
         shell: pwsh
         run: |
@@ -48,9 +54,3 @@ jobs:
             if ($errors) { $errors | ForEach-Object { "::error file=$f::$_" }; $failed = $true }
           }
           if ($failed) { exit 1 }
-      - name: Checkout line endings follow .gitattributes
-        shell: bash
-        run: |
-          # Bash rejects CRLF scripts; cmd.exe mis-parses LF batch files.
-          bad=$( { git ls-files --eol -- '*.sh' | grep -v 'w/lf'; git ls-files --eol -- '*.bat' '*.cmd' | grep -v 'w/crlf'; } || true)
-          if [ -n "$bad" ]; then echo "::error::wrong line endings on a Windows checkout:"; echo "$bad"; exit 1; fi
