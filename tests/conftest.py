@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-for sub in ("tools/gaia-tui", "tools/perplexity", "knowledgework"):
+for sub in ("tools", "tools/gaia-tui", "tools/perplexity", "knowledgework"):
     path = str(REPO / sub)
     if path not in sys.path:
         sys.path.insert(0, path)
