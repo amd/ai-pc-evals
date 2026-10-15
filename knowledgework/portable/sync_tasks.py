@@ -157,7 +157,8 @@ def main(argv: list[str]) -> int:
             return 1
         print("ok")
         return 0
-    TASKS_FILE.write_text(text, encoding="utf-8", newline="\n")
+    if text != current_text:  # leave an unchanged CRLF checkout alone
+        TASKS_FILE.write_text(text, encoding="utf-8", newline="\n")
     for p, t in expected.items():
         if not p.is_file() or p.read_text(encoding="utf-8") != t:  # leave an unchanged CRLF checkout alone
             p.write_text(t, encoding="utf-8", newline="\n")
