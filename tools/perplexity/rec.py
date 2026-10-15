@@ -4,14 +4,21 @@ usage: python rec.py <out.mp4>
 stop:  create <out.mp4>.stop  (ffmpeg gets 'q' so the mp4 is finalized)
 
 A window-title capture grabs Perplexity's hidden helper window (black), so
-capture the primary display with the app maximized on it.
+capture the primary display with the app maximized on it. REC_VIDEO_SIZE sets the
+captured area from the top-left corner (default 2560x1080, the evaluation display).
 """
 
+import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+if len(sys.argv) != 2:
+    sys.exit(__doc__)
+if not shutil.which("ffmpeg"):
+    sys.exit("ERROR: ffmpeg is not on PATH; install it (winget install Gyan.FFmpeg) to record runs")
 out = Path(sys.argv[1])
 out.parent.mkdir(parents=True, exist_ok=True)
 stop = out.with_suffix(out.suffix + ".stop")
@@ -20,7 +27,7 @@ proc = subprocess.Popen(
     [
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "gdigrab", "-framerate", "10",
-        "-offset_x", "0", "-offset_y", "0", "-video_size", "2560x1080",
+        "-offset_x", "0", "-offset_y", "0", "-video_size", os.environ.get("REC_VIDEO_SIZE", "2560x1080"),
         "-i", "desktop",
         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
