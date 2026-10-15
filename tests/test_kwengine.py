@@ -939,3 +939,13 @@ def test_stop_without_a_recording_is_an_error(tmp_path):
 def test_the_supervisor_imports_this_checkouts_engine():
     assert screen_record.SRC_ROOT == REPO
     assert (screen_record.SRC_ROOT / "kwengine" / "screen_record.py").is_file()
+
+
+def test_the_release_package_ships_the_engine():
+    import package
+
+    shipped = set(package.shipped(package.tracked_files()))
+    for name in ("__init__", "__main__", "_support", "cli", "extract", "grade", "plants", "schema",
+                 "screen_record", "workspace"):
+        assert f"kwengine/{name}.py" in shipped
+    assert "knowledgework/fixtures/kw-00-smoke/expenses.csv" in shipped
