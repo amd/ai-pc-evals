@@ -18,6 +18,7 @@ WEB_TOOLS = ["WebFetch", "WebSearch"]
 
 class ClaudeCode(Agent):
     name = "claude-code"
+    capabilities = frozenset({"web", "multimodal"})  # no Google Drive or other connectors here
 
     def __init__(self, model: str = "haiku", **options: Any) -> None:
         super().__init__(model, **options)
