@@ -158,10 +158,11 @@ def test_unknown_tasks_and_missing_harness_fail_clearly(tmp_path, monkeypatch):
     monkeypatch.setattr(ClaudeCode, "check", lambda self: None)
     with pytest.raises(run_eval.EvalError, match="not in suite portable"):
         run_eval.run("claude-code", "haiku", "portable", ["pc-99"], tmp_path / "out", tmp_path, "m")
+    # The engine is this repo's kwengine: no harness checkout is needed, and a failed step names itself.
     monkeypatch.delenv("GAIA_KW_REPO", raising=False)
     monkeypatch.delenv("GAIA_REPO", raising=False)
-    with pytest.raises(run_eval.EvalError, match="GAIA_KW_REPO"):
-        run_eval.harness_repo()
+    with pytest.raises(run_eval.EvalError, match=r"kwengine grade .* exited 2(?s:.*)No kw-run.json"):
+        run_eval.kw("grade", str(tmp_path / "no-such-run"))
     with pytest.raises(run_eval.EvalError, match="no suite"):
         run_eval.suite_tasks("nope")
 
