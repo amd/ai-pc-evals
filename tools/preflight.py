@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import stat
 import sys
 import hashlib
 import tempfile
