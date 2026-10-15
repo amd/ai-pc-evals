@@ -52,3 +52,6 @@ Thumbs.db
 !tests/regression/*.pptx
 !tests/regression/*.xlsx
 !tests/regression/*.docx
+
+# Claude Code session state and agent worktrees
+.claude/
