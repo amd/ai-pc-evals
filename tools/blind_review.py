@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -41,8 +43,15 @@ def render_side(paths: list[Path], dest: Path) -> list[Path]:
     for p in paths:
         files += sorted(f for f in p.rglob("*") if f.is_file()) if p.is_dir() else [p]
     out: list[Path] = []
-    for f in files:
-        out += render.render(f, dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="kw-blind-") as tmp:
+        for i, f in enumerate(files):
+            for img in render.render(f, Path(tmp) / str(i)):
+                # Neutral names: a file name like Budget_Test_Reviewed_CLOUD_... would unblind the review,
+                # and two deliverables with the same stem would overwrite each other's pages.
+                target = dest / f"page-{len(out) + 1:03d}{img.suffix}"
+                shutil.copyfile(img, target)
+                out.append(target)
     if not out:
         raise SystemExit(f"nothing to render in {[str(p) for p in paths]}")
     return out

@@ -1,5 +1,6 @@
 """snapshot_sources.py offline: captures are faked; manifest, lock, verify and bundles are real."""
 import json
+import pathlib
 
 import pytest
 
@@ -182,6 +183,7 @@ def test_a_bot_check_page_is_never_saved_as_the_source(monkeypatch, tmp_path):
     cloudflare = ("<html><body>www.perplexity.ai Performing security verification This website uses a "
                   "security service to protect against malicious bots.</body></html>")
     monkeypatch.setattr(ss, "chrome", lambda *a: ss.subprocess.CompletedProcess(a, 0, cloudflare, ""))
+    monkeypatch.setattr(ss, "http_get", lambda url: cloudflare.encode())  # the plain download is challenged too
     with pytest.raises(ss.SnapshotError, match="bot check"):
         ss.capture_page({"id": "P3", "url": "https://www.perplexity.ai/hub/blog/x"}, tmp_path)
     assert list(tmp_path.iterdir()) == []
@@ -194,3 +196,55 @@ def test_a_refused_page_load_is_an_error_not_a_blank_snapshot(monkeypatch):
     monkeypatch.setattr(ss, "CHROME", __file__)
     with pytest.raises(ss.SnapshotError, match="refused the automated browser"):
         ss.chrome("--dump-dom", "https://www.amd.com/")
+
+
+ARTICLE = "<html><title>Portable Computer comes to AMD</title><body>" + "<p>Real article text. </p>" * 200 + "</body></html>"
+
+
+def test_an_empty_shell_is_not_a_snapshot(monkeypatch, tmp_path):
+    # Reddit serves scripts a near-empty page titled 'Reddit': no bot-check wording, no content.
+    shell = "<html><title>Reddit</title><body><script>app()</script>Reddit</body></html>"
+    monkeypatch.setattr(ss, "chrome", lambda *a: ss.subprocess.CompletedProcess(a, 0, shell, ""))
+    monkeypatch.setattr(ss, "http_get", lambda url: shell.encode())
+    with pytest.raises(ss.SnapshotError, match="no readable content"):
+        ss.capture_page({"id": "R1", "url": "https://www.reddit.com/r/x/comments/1/t/"}, tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_page_refused_to_the_browser_but_served_to_a_plain_client_is_printed_from_the_saved_copy(monkeypatch, tmp_path):
+    printed = []
+
+    def chrome(*args):
+        if "--dump-dom" in args:
+            raise ss.SnapshotError("the site refused the automated browser")
+        pdf = next(a for a in args if a.startswith("--print-to-pdf="))[len("--print-to-pdf="):]
+        printed.append(args[-1])
+        pathlib.Path(pdf).write_bytes(b"%PDF" + b"x" * 2000)
+        return ss.subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(ss, "chrome", chrome)
+    monkeypatch.setattr(ss, "http_get", lambda url: ARTICLE.encode())
+    files = ss.capture_page({"id": "P3", "url": "https://www.perplexity.ai/hub/blog/x"}, tmp_path)
+    assert [f.name for f in files] == ["P3.pdf", "P3.html"]
+    assert printed == [(tmp_path / "P3.html").resolve().as_uri()]  # the saved copy, not the live site
+
+
+def test_retry_fetches_only_what_is_missing(tmp_path, monkeypatch):
+    fetched = []
+
+    def page(src, dest):
+        fetched.append(src["id"])
+        p = dest / f"{src['id']}.pdf"
+        p.write_bytes(src["id"].encode())
+        return [p]
+    monkeypatch.setitem(ss.CAPTURE, "page", page)
+    packs = write_packs(tmp_path, [{"id": i, "url": f"https://x/{i}", "kind": "page"} for i in ("P1", "P2", "P3")])
+    root = tmp_path / "snap"
+    (root / "P").mkdir(parents=True)
+    (root / "P" / "P2.pdf").write_bytes(b"kept")
+    ss._write_manifest(root / "P", "P", [ss._entry({"id": "P2", "url": "https://x/P2"}, root / "P" / "P2.pdf", "page")])
+    with pytest.raises(ss.SnapshotError, match="--retry"):
+        ss.capture("P", root, packs)
+    manifest, manual = ss.capture("P", root, packs, retry=True)
+    assert fetched == ["P1", "P3"] and manual == []
+    assert [e["id"] for e in json.loads(manifest.read_text())["files"]] == ["P1", "P2", "P3"]
+    assert (root / "P" / "P2.pdf").read_bytes() == b"kept"

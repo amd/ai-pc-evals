@@ -76,6 +76,17 @@ def _coord(text: str) -> Tuple[int, int]:
     return int(m.group(2)), _col(m.group(1))
 
 
+def excel_serial(v: Any) -> Optional[float]:
+    """A date or datetime as Excel's serial number (days since 1899-12-30), as Excel computes with it."""
+    import datetime as _dt
+
+    if isinstance(v, _dt.datetime):
+        return (v - _dt.datetime(1899, 12, 30)).total_seconds() / 86400
+    if isinstance(v, _dt.date):
+        return float((v - _dt.date(1899, 12, 30)).days)
+    return None
+
+
 def number_from_text(text: str) -> Optional[float]:
     """The number Excel reads in *text* ("$1,234.50", "(200)", "12%"), or None."""
     m = _NUMERIC_TEXT.fullmatch(text)
@@ -215,6 +226,8 @@ class _Parser:
             return float(v)
         if isinstance(v, (int, float)):
             return float(v)
+        if excel_serial(v) is not None:
+            return excel_serial(v)
         if isinstance(v, str):
             n = number_from_text(v)
             if n is not None:
@@ -405,7 +418,8 @@ class _Parser:
         out: List[float] = []
         for a in args:
             if isinstance(a, _Range):
-                out += [float(v) for v in a.values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+                out += [float(v) if excel_serial(v) is None else excel_serial(v) for v in a.values
+                        if (isinstance(v, (int, float)) and not isinstance(v, bool)) or excel_serial(v) is not None]
             else:
                 out.append(self._num(a))
         return out
@@ -479,6 +493,8 @@ def _compare(a: Any, op: str, b: Any) -> bool:
             return "" if isinstance(other, str) else 0.0
         if isinstance(v, bool):
             return float(v)
+        if excel_serial(v) is not None:
+            return excel_serial(v)
         return v.lower() if isinstance(v, str) else float(v)
     x, y = norm(a, b), norm(b, a)
     if isinstance(x, str) != isinstance(y, str):  # Excel orders numbers before text

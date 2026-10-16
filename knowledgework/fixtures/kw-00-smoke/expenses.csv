@@ -1,0 +1,5 @@
+date,invoice,vendor,amount
+2026-09-01,INV-1001,Acme Paper,120.00
+2026-09-03,INV-1002,Northwind Travel,845.50
+2026-09-03,INV-1002,Northwind Travel,845.50
+2026-09-08,INV-1003,Contoso Catering,269.00

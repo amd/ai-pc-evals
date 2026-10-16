@@ -19,6 +19,8 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
+      - name: Release notes from CHANGELOG.md (fails if this version has none)
+        run: python tools/release_notes.py "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
       - name: Build the package
         run: python tools/package.py --out dist --tag "$GITHUB_REF_NAME"
       - name: Publish the release
@@ -27,4 +29,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.sha256 \
             --title "AI PC evals $GITHUB_REF_NAME" \
-            --notes "Eval package $GITHUB_REF_NAME. Unzip, follow README.md. Every result records this version (tools/evalversion.py). Source documents download when an eval runs."
+            --notes-file "$RUNNER_TEMP/notes.md"

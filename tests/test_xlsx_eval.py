@@ -170,3 +170,19 @@ def test_text_excel_reads_as_a_number(text, number):
 @pytest.mark.parametrize("text", ["text", "1,50", "$", "", "12 apples", "(5", "1.2.3"])
 def test_text_excel_does_not_read_as_a_number(text):
     assert xlsx_eval.number_from_text(text) is None
+
+
+def test_dates_compute_as_excel_serials(tmp_path):
+    import datetime as dt
+
+    def build(wb, ws):
+        ws["B2"], ws["C2"] = dt.date(2026, 10, 1), dt.date(2026, 10, 15)
+        ws["A1"] = "=C2-B2"
+        ws["A2"] = '=IF(C2>B2,"Late","")'
+        ws["A3"] = "=COUNT(B2:C2)"
+
+    wb = xlsx_eval.Workbook(book(tmp_path, build))
+    assert wb.value("Data", 1, 1) == 14.0
+    assert wb.value("Data", 2, 1) == "Late"
+    assert wb.value("Data", 3, 1) == 2.0
+    assert xlsx_eval.excel_serial(dt.date(2026, 10, 15)) == 46310.0  # Excel's serial for that day

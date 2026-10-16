@@ -18,6 +18,7 @@ WEB_TOOLS = ["WebFetch", "WebSearch"]
 
 class ClaudeCode(Agent):
     name = "claude-code"
+    capabilities = frozenset({"web", "multimodal"})  # no Google Drive or other connectors here
 
     def __init__(self, model: str = "haiku", **options: Any) -> None:
         super().__init__(model, **options)
@@ -34,7 +35,8 @@ class ClaudeCode(Agent):
         # skills. (Not --bare: it cuts the tools to Bash, Edit and Read whatever --tools says.)
         # Web tools exist only for tasks that need the web, so a fixed-source task can't browse.
         tools = ",".join(self.tools(task))
-        cmd = [self.exe, "-p", task.prompt, "--model", self.model, "--restricted", "--strict-mcp-config",
+        # The resolved path: on Windows an npm install is claude.cmd, which a bare "claude" can't launch.
+        cmd = [shutil.which(self.exe) or self.exe, "-p", task.prompt, "--model", self.model, "--restricted", "--strict-mcp-config",
                "--disable-slash-commands", "--tools", tools, "--allowedTools", tools,
                "--output-format", "stream-json", "--verbose", "--no-session-persistence",
                "--permission-mode", "acceptEdits"]
@@ -61,6 +63,9 @@ class ClaudeCode(Agent):
                 stderr, code = proc.stderr, proc.returncode
             except subprocess.TimeoutExpired as e:
                 timed_out, stderr, code = True, (e.stderr or "") if isinstance(e.stderr, str) else "", -1
+            except OSError as e:  # the CLI vanished or can't be launched
+                return AgentResult(answer="", wall_seconds=0.0, model=self.model, error=f"{self.exe}: {e}",
+                                   error_kind="unavailable")
         wall = time.monotonic() - start
         result = self.parse(transcript, wall, timed_out, code, stderr)
         given = result.extra.get("tools_available")
@@ -105,7 +110,9 @@ class ClaudeCode(Agent):
         return AgentResult(
             answer=answer or "",
             wall_seconds=round(wall, 1),
-            model=",".join(models) or self.model,
+            # The requested model on every result, so one run never 'mixes models' when a task times out
+            # before Claude Code reports which model it used; the IDs it did report are kept beside it.
+            model=self.model,
             steps=final.get("num_turns"),
             tool_calls=tool_calls,
             input_tokens=(usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0),
@@ -118,5 +125,6 @@ class ClaudeCode(Agent):
             web_uses=web_uses,
             transcript=str(transcript),
             extra={"permission_denials": final.get("permission_denials") or [],
-                   "tools_available": init.get("tools"), "mcp_servers": init.get("mcp_servers")},
+                   "tools_available": init.get("tools"), "mcp_servers": init.get("mcp_servers"),
+                   "models_used": models},
         )
