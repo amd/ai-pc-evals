@@ -246,7 +246,9 @@ def build_each(ids: List[str], suite: str, fixtures: Path, vault: KeyVault) -> D
             build([tid], suite, fixtures, vault)
         except EvalError as e:
             lines = [ln.strip() for ln in str(e).splitlines() if ln.strip()]
-            why = next((ln[len("ERROR: "):] for ln in lines if ln.startswith("ERROR: ")), lines[-1] if lines else "")
+            at = next((i for i, ln in enumerate(lines) if ln.startswith("ERROR: ")), None)
+            # The whole message from ERROR: on (what is wrong, then what to do), not just its first line.
+            why = " ".join(lines[at:])[len("ERROR: "):] if at is not None else (lines[-1] if lines else "")
             failed[tid] = (why, str(e))
     return failed
 
