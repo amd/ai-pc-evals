@@ -45,3 +45,8 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 Thumbs.db
+
+# Real agent outputs kept as regression samples for the probes (small, synthetic tasks only).
+!tests/regression/*.pptx
+!tests/regression/*.xlsx
+!tests/regression/*.docx

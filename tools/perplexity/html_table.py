@@ -2,6 +2,7 @@
 
 usage: python html_table.py [out.html]   -> writes out.html and out.png
 """
+import html
 import os
 import subprocess
 import sys
@@ -42,7 +43,7 @@ def secs(r):
 def main(out):
     rows = collect()
     legs = LEGS
-    tasks = ORDER
+    tasks = ORDER + sorted(t for t in rows if t not in ORDER)
     common = [t for t in tasks if t in rows]
 
     def cells(r, cloud, cls, leg_key="", tid_now=""):
@@ -63,7 +64,7 @@ def main(out):
 
     body = []
     for tid in tasks:
-        name, desc = TITLES[tid]
+        name, desc = TITLES.get(tid, (tid, html.escape(next(iter(rows.get(tid, {}).values()), {}).get("category", ""))))
         legs_here = rows.get(tid, {})
         for v in legs_here.values():
             v["tid"] = tid
