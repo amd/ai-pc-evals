@@ -244,6 +244,7 @@ def test_audit_ignores_ordinary_work(tmp_path):
 
 def test_tasks_needing_what_the_agent_lacks_are_skipped_not_failed(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(ClaudeCode, "check", lambda self: None)
+    monkeypatch.setattr(run_eval, "passphrase", lambda: "test")  # CI has none
     calls = []
     monkeypatch.setattr(run_eval, "build", lambda *a, **k: calls.append("build"))
 
