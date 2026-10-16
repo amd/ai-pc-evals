@@ -25,6 +25,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,7 +36,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PACKS = REPO / "knowledgework" / "portable" / "packs.json"
-LOCK = REPO / "knowledgework" / "portable" / "snapshots.lock.json"
+#: The committed lock. GAIA_KW_SNAPSHOT_LOCK points at another one for development packs (stand-ins for
+#: pages not saved yet); every result then says DEV SNAPSHOTS and is not comparable.
+LOCK = Path(os.environ.get("GAIA_KW_SNAPSHOT_LOCK") or REPO / "knowledgework" / "portable" / "snapshots.lock.json")
 ROOT = Path(os.environ.get("GAIA_KW_SNAPSHOTS") or Path.home() / ".gaia" / "cache" / "knowledgework" / "snapshots")
 CHROME = os.environ.get("CHROME_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 UA = "GAIA-knowledgework-eval/1.0 (+https://github.com/amd/gaia)"
@@ -100,13 +103,41 @@ def challenge_page(html: str) -> str | None:
     return next((m for m in CHALLENGE_MARKERS if m in low), None)
 
 
-def capture_page(src: dict, dest: Path) -> list[Path]:
-    pdf, html = dest / f"{src['id']}.pdf", dest / f"{src['id']}.html"
-    dom = chrome("--dump-dom", src["url"]).stdout
-    marker = challenge_page(dom)
+MIN_WORDS = 150
+
+
+def visible_words(html: str) -> int:
+    text = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", html)
+    return len(re.sub(r"<[^>]+>", " ", text).split())
+
+
+def readable(html: str) -> None:
+    """Refuse what isn't the page: a bot check, or a near-empty shell (Reddit serves one to scripts)."""
+    marker = challenge_page(html)
     if marker:
         raise SnapshotError(f"the site served a bot check ({marker!r}) instead of the page")
-    chrome(f"--print-to-pdf={pdf}", src["url"])
+    words = visible_words(html)
+    if words < MIN_WORDS:
+        raise SnapshotError(f"the site served a page with no readable content ({words} words)")
+
+
+def capture_page(src: dict, dest: Path) -> list[Path]:
+    pdf, html = dest / f"{src['id']}.pdf", dest / f"{src['id']}.html"
+    try:
+        dom = chrome("--dump-dom", src["url"]).stdout
+        readable(dom)
+        target = src["url"]
+    except SnapshotError as refused:
+        # Some sites refuse the headless browser but serve an honestly identified plain client; take the
+        # page that way only if it is the real page, then print the saved copy. Nothing is disguised.
+        try:
+            dom = http_get(src["url"]).decode("utf-8", errors="replace")
+            readable(dom)
+        except (OSError, SnapshotError) as e:
+            raise SnapshotError(f"{refused}; a plain download got: {e}") from e
+        html.write_text(dom, encoding="utf-8")
+        target = html.resolve().as_uri()
+    chrome(f"--print-to-pdf={pdf}", target)
     if not pdf.is_file() or pdf.stat().st_size < 1000:
         pdf.unlink(missing_ok=True)
         raise SnapshotError(f"Chrome produced no usable PDF for {src['url']}")
@@ -191,14 +222,21 @@ def _write_manifest(dest: Path, pack: str, entries: list[dict]) -> Path:
     return manifest
 
 
-def capture(pack: str, root: Path = ROOT, packs_file: Path = PACKS) -> tuple[Path, list[str]]:
-    """(manifest, ids that need a manual save). Sources that refuse automation are skipped, not forced."""
+def capture(pack: str, root: Path = ROOT, packs_file: Path = PACKS, retry: bool = False) -> tuple[Path, list[str]]:
+    """(manifest, ids that need a manual save). Sources that refuse automation are skipped, not forced.
+    With *retry*, only sources not yet in the pack are fetched; saved ones are never touched."""
     sources = pack_sources(pack, packs_file)
     dest = root / pack
-    if dest.exists() and any(dest.iterdir()):
-        raise SnapshotError(f"{dest} already holds a capture; a pack is saved once. Move it aside to re-capture.")
+    entries: list[dict] = []
+    if retry and (dest / "manifest.json").is_file():
+        entries = json.loads((dest / "manifest.json").read_text(encoding="utf-8"))["files"]
+        have = {e["id"] for e in entries}
+        sources = [s for s in sources if s["id"] not in have]
+    elif dest.exists() and any(dest.iterdir()):
+        raise SnapshotError(f"{dest} already holds a capture; a pack is saved once. Use --retry to fetch only "
+                            "the sources still missing, or move it aside to re-capture.")
     dest.mkdir(parents=True, exist_ok=True)
-    entries, manual = [], []
+    manual = []
     for src in sources:
         try:
             files = CAPTURE[src["kind"]](src, dest)
@@ -208,6 +246,8 @@ def capture(pack: str, root: Path = ROOT, packs_file: Path = PACKS) -> tuple[Pat
             continue
         entries += [_entry(src, f, src["kind"]) for f in files]
         print(f"saved {src['id']}")
+    order = [s["id"] for s in pack_sources(pack, packs_file)]
+    entries.sort(key=lambda e: order.index(e["id"]))
     return _write_manifest(dest, pack, entries), manual
 
 
@@ -295,7 +335,10 @@ def install_zip(bundle: Path, root: Path = ROOT) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("capture", "lock", "verify"):
+    cap = sub.add_parser("capture")
+    cap.add_argument("pack")
+    cap.add_argument("--retry", action="store_true", help="fetch only the sources not yet in the pack")
+    for name in ("lock", "verify"):
         sub.add_parser(name).add_argument("pack")
     im = sub.add_parser("import")
     im.add_argument("pack")
@@ -309,7 +352,7 @@ def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     try:
         if args.cmd == "capture":
-            manifest, manual = capture(args.pack)
+            manifest, manual = capture(args.pack, retry=args.retry)
             print(f"wrote {manifest}")
             for sid in manual:
                 print(f"  save {sid} in a browser (Print > Save as PDF), then: "
