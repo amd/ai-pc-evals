@@ -153,7 +153,9 @@ def run_probe(
     return True, "probe ok"
 
 
-_EXCEPTION_LINE = re.compile(r"^[A-Za-z_][\w.]*(Error|Exception|Exit|Warning)\b.*")
+# Python prints an exception as "Name: message" or "pkg.mod.Name: message" (BadZipFile has no "Error"
+# suffix); a bare "SomethingError" line has no message. Neither matches "Traceback (most recent ...):".
+_EXCEPTION_LINE = re.compile(r"^[A-Za-z_][\w.]*: \S.*|^[A-Za-z_][\w.]*(Error|Exception)$")
 
 
 def probe_reason(stdout: str, stderr: str) -> str:
