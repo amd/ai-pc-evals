@@ -1,6 +1,8 @@
 # Data and results are never committed: inputs download on demand, results are per machine.
 fixtures/
 **/fixtures/
+# ...except the tiny committed smoke fixture (a task input with "source": "repo").
+!knowledgework/fixtures/
 pinned_cache/
 cache/
 runs/
@@ -49,3 +51,11 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 Thumbs.db
+
+# Real agent outputs kept as regression samples for the probes (small, synthetic tasks only).
+!tests/regression/*.pptx
+!tests/regression/*.xlsx
+!tests/regression/*.docx
+
+# Claude Code session state and agent worktrees
+.claude/

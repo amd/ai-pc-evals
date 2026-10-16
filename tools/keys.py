@@ -526,7 +526,8 @@ def check(*, repo: Path = REPO, deep_passphrase: Optional[str] = None) -> List[s
     problems += [f"plaintext in repo: {p}" for p in repo_plaintext(repo, fp.Matcher(manifest))]
     if deep_passphrase is not None:
         payload = unseal(bundle, deep_passphrase, str(bundle_path))
-        if _dump(public_tasks(payload["tasks"])).encode("utf-8") != public_bytes:
+        # Compared as data: the bundle keeps the tasks with sorted keys, the public file in the order written.
+        if public_tasks(payload["tasks"]) != json.loads(public_bytes.decode("utf-8")):
             problems.append("tasks.public.json is not what the bundle generates: re-run encrypt")
         if [t["id"] for t in payload["tasks"]["tasks"]] != manifest["tasks"]:
             problems.append("the bundle's task list differs from the manifest")

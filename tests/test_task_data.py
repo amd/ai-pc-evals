@@ -125,8 +125,8 @@ def test_builder_tables_only_name_real_tasks():
     assert set(bf.SOURCES) <= ids
 
 
-def test_every_kw_task_has_a_source_note():
+def test_every_kw_and_pc_task_has_a_source_note():
     ids = {t["id"] for f in TASK_FILES for t in load(f)["tasks"]}
     for tid in sorted(ids):
-        if re.match(r"kw-(0[1-9]|1\d)-", tid):
+        if re.match(r"(kw-(?!00)|pc-)\d\d-", tid):
             assert (KW / "sources" / f"{tid}.md").is_file(), f"missing knowledgework/sources/{tid}.md"

@@ -1,4 +1,0 @@
-# Grading machines only: tools/keys.py (encrypt/decrypt) and the passphrase store.
-# preflight.py and audit.py need only the standard library.
-cryptography>=42
-keyring>=24
