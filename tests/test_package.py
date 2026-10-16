@@ -87,3 +87,9 @@ def test_every_release_has_notes():
     with pytest.raises(SystemExit, match="no notes for v9.9.9"):
         release_notes.section("## v1.0.0\n\nnotes\n", "9.9.9")
     assert release_notes.section("## v1.0.0\n\nfirst\n## v0.9.0\n\nolder\n", "1.0.0") == "first\n"
+
+
+def test_the_fingerprint_covers_what_decides_portable_inputs_and_keys():
+    for rel in ("knowledgework/portable/packs.json", "knowledgework/portable/spec.json",
+                "knowledgework/portable/snapshots.lock.json", "kwengine/grade.py", "knowledgework/xlsx_eval.py"):
+        assert rel in evalversion.FINGERPRINTED

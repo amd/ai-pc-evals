@@ -273,3 +273,15 @@ def test_live_judge_flags_planted_defects_and_prefers_the_clean_slide(tmp_path):
     assert {"overflow_or_clipping", "misspelling", "overlap"} <= types
     assert r["absolute"]["A"]["scores"]["formatting"] < r["absolute"]["B"]["scores"]["formatting"]
     assert r["pairwise"]["overall"] == "B"
+
+
+def test_blind_review_pages_have_neutral_names_and_never_overwrite(tmp_path):
+    a = tmp_path / "outputs"
+    b = tmp_path / "draft"
+    a.mkdir()
+    b.mkdir()
+    png(a / "Budget_Test_Reviewed_CLOUD_perplexity-cloud.png")
+    png(b / "Budget_Test_Reviewed_CLOUD_perplexity-cloud.png", color=(20, 200, 20))
+    pages = blind_review.render_side([a, b], tmp_path / "A")
+    assert [p.name for p in pages] == ["page-001.png", "page-002.png"]
+    assert pages[0].read_bytes() != pages[1].read_bytes()
