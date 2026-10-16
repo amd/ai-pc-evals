@@ -57,7 +57,7 @@ def inputs(task: dict) -> str:
 def render() -> str:
     spec = json.loads((KW / "portable" / "spec.json").read_text(encoding="utf-8"))["tasks"]
     rows = []
-    for f, label in (("verify_tasks.json", None), ("tasks.json", None)):
+    for f, label in (("verify_tasks.json", None), ("tasks.public.json", None)):
         data = json.loads((KW / f).read_text(encoding="utf-8"))
         by_id = {t["id"]: t for t in data["tasks"]}
         for suite, ids in data["suites"].items():
