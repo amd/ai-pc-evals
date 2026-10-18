@@ -140,7 +140,7 @@ def notes() -> dict[Path, str]:
 
 
 #: One order for the task file, whichever suite's sync runs last: knowledge work, portable, developer, rest.
-ORDER = ("kw-", "pc-", "dev-")
+ORDER = ("kw-", "pc-", "dev-", "as-")
 
 
 def ordered(tasks: list) -> list:

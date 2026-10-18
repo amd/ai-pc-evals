@@ -396,7 +396,7 @@ def test_a_manual_agent_runs_end_to_end_on_a_fresh_machine(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("argv, message", [
     (["--agent", "nope", "--suite", "verify"], "unknown agent 'nope'"),
-    (["--agent", "claude-code", "--suite", "nosuch"], "known: developer, knowledgework, portable, smoke, verify"),
+    (["--agent", "claude-code", "--suite", "nosuch"], "known: assistant, developer, knowledgework, portable, smoke, verify"),
     (["--grade-only", "definitely-not-a-run"], "is not a run folder"),
 ])
 def test_common_mistakes_get_one_clear_line_not_a_traceback(argv, message, capsys, monkeypatch):
