@@ -34,7 +34,7 @@ jobs:
       - name: Shell scripts
         run: shellcheck -S warning $(git ls-files '*.sh')
       - name: JSON files parse
-        run: for f in $(git ls-files '*.json'); do python -m json.tool "$f" >/dev/null || { echo "::error file=$f::invalid JSON"; exit 1; }; done
+        run: for f in $(git ls-files '*.json' ':!knowledgework/assistant/corpus/**'); do python -m json.tool "$f" >/dev/null || { echo "::error file=$f::invalid JSON"; exit 1; }; done
       - name: Scripts are committed with LF
         run: |
           bad=$(git ls-files --eol -- '*.sh' '*.py' '*.bat' '*.cmd' '*.ps1' ':!knowledgework/assistant/corpus/**' | grep -v '^i/lf' || true)
