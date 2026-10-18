@@ -179,7 +179,8 @@ def run_probe(
         if answers is not None:
             probe_env[workspace.KEYS_ENV] = str(_probe_keys(Path(tmp), task, answers))
         proc = subprocess.Popen(
-            [sys.executable, "-I", "-"],
+            # -X utf8: -I ignores PYTHONIOENCODING, and a reason naming "↑" must not crash on cp1252 stdout
+            [sys.executable, "-I", "-X", "utf8", "-"],
             cwd=str(copy),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
