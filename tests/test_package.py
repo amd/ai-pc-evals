@@ -77,7 +77,9 @@ def test_use_cases_table_is_up_to_date():
 
     assert use_cases.main(["--check"]) == 0
     text = use_cases.OUT.read_text(encoding="utf-8")
-    assert text.count("\n| ") == 35  # header plus one row per task
+    kw = use_cases.KW
+    n = sum(len(json.loads((kw / f).read_text(encoding="utf-8"))["tasks"]) for f in ("tasks.public.json", "verify_tasks.json"))
+    assert text.count("\n| ") == 1 + n  # header plus one row per task
 
 
 def test_every_release_has_notes():

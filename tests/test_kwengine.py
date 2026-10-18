@@ -997,3 +997,11 @@ def test_judge_grades_are_found_when_wrapped_or_keyed_short():
     assert g._keyed({"grades": {keys[0]: grade, keys[1]: grade}}, keys)[keys[1]] == grade
     assert g._keyed({"kw-01": grade, "kw-02": grade}, keys)[keys[0]] == grade
     assert keys[0] not in g._keyed({"a1": grade}, keys)  # nothing to match: left for the error path
+
+
+def test_tags_are_optional_short_lowercase_and_unique():
+    assert _parse(tags=["gaia", "lane:smoke", "rag-1.2"]).tags == ("gaia", "lane:smoke", "rag-1.2")
+    assert _parse().tags == ()
+    for bad, message in ((["Gaia"], "lowercase"), (["a b"], "lowercase"), (["x", "x"], "twice")):
+        with pytest.raises(ValueError, match=message):
+            _parse(tags=bad)
