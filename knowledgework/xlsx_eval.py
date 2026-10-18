@@ -12,8 +12,9 @@ A cell without a cached value is evaluated here, the way Excel would:
   and whole columns ``D:D`` (the sheet's used rows);
 - numbers, ``"text"``, ``TRUE``/``FALSE``; ``+ - * / ^``, unary minus, ``&``
   and the comparisons ``= <> < > <= >=``;
-- SUM, AVERAGE, MIN, MAX, ROUND, ABS, COUNT, COUNTA, IF, IFERROR, SUMIF, COUNTIF,
-  SUMPRODUCT, AND, OR, NOT, ISNUMBER, ISBLANK;
+- SUM, AVERAGE, MIN, MAX, ROUND, ABS, COUNT, COUNTA, IF, IFS, IFERROR, IFNA, ISERROR,
+  SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF, AVERAGEIFS, SUBTOTAL, SUMPRODUCT, AND, OR,
+  NOT, ISNUMBER, ISBLANK;
 - text that Excel reads as a number in arithmetic ("$200,000", "1,500", "12%")
   counts as that number, as it does in Excel.
 
@@ -33,8 +34,11 @@ import fnmatch
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-FUNCTIONS = ("SUM", "AVERAGE", "MIN", "MAX", "ROUND", "ABS", "COUNT", "COUNTA", "IF", "IFERROR", "SUMIF",
-             "COUNTIF", "SUMPRODUCT", "AND", "OR", "NOT", "ISNUMBER", "ISBLANK")
+FUNCTIONS = ("SUM", "AVERAGE", "MIN", "MAX", "ROUND", "ABS", "COUNT", "COUNTA", "IF", "IFS", "IFERROR", "IFNA",
+             "ISERROR", "SUMIF", "SUMIFS", "COUNTIF", "COUNTIFS", "AVERAGEIF", "AVERAGEIFS", "SUBTOTAL",
+             "SUMPRODUCT", "AND", "OR", "NOT", "ISNUMBER", "ISBLANK")
+#: SUBTOTAL's function numbers (101-111: the same, ignoring hidden rows, which a file read can't see).
+SUBTOTAL = {1: "AVERAGE", 2: "COUNT", 3: "COUNTA", 4: "MAX", 5: "MIN", 9: "SUM"}
 
 
 class FormulaError(ValueError):
@@ -348,7 +352,54 @@ class _Parser:
         """One argument: a range stays a range; IFERROR's first argument may be an Excel error."""
         return self._compare()
 
+    def _lazy(self) -> Any:
+        """The next argument, or _Untaken() if it is an Excel error: only an argument used may fail."""
+        start = self.i
+        try:
+            return self._scalar(self._arg())
+        except ExcelError:
+            self.i = start
+            self._skip_argument()
+            return _Untaken()
+
     def _call(self, name: str) -> Any:
+        if name == "ISERROR":
+            value = self._lazy()
+            self._close(name)
+            return isinstance(value, _Untaken)
+        if name == "IFNA":
+            # Nothing here yields #N/A (no lookups), so the value stands; any other error still shows.
+            value = self._scalar(self._arg())
+            if not self._is_op(","):
+                raise FormulaError(f"{self.where}: IFNA needs two arguments")
+            self._take()
+            self._lazy()
+            self._close(name)
+            return value
+        if name == "IFS":
+            chosen: Any = None
+            found = False
+            while True:  # conditions in order; once one is true, the rest are skipped, not evaluated
+                if found:
+                    self._skip_argument()
+                    hit = False
+                else:
+                    found = hit = self._bool(self._scalar(self._arg()))
+                if not self._is_op(","):
+                    raise FormulaError(f"{self.where}: IFS needs condition, value pairs")
+                self._take()
+                value = self._lazy()
+                if hit:
+                    chosen = value
+                if not self._is_op(","):
+                    break
+                self._take()
+            self._close(name)
+            if not found:
+                raise ExcelError(f"{self.where}: no IFS condition is true (#N/A)")
+            if isinstance(chosen, _Untaken):
+                raise ExcelError(f"{self.where}: IFS chose a value that is an error")
+            return chosen
         if name == "IFERROR":
             start = self.i
             try:
@@ -468,6 +519,38 @@ class _Parser:
             sums = args[2].values if len(args) > 2 and isinstance(args[2], _Range) else rng
             return float(sum(s for v, s in zip(rng, sums)
                              if test(v) and isinstance(s, (int, float)) and not isinstance(s, bool)))
+        if name in ("SUMIFS", "COUNTIFS", "AVERAGEIFS"):
+            first = 0 if name == "COUNTIFS" else 1
+            if len(args) < first + 2 or (len(args) - first) % 2:
+                raise FormulaError(f"{self.where}: {name} needs range, criterion pairs")
+            pairs = [(args[i], _criterion(self._scalar(args[i + 1]))) for i in range(first, len(args), 2)]
+            ranges = [r.values if isinstance(r, _Range) else [r] for r, _ in pairs]
+            target = (args[0].values if isinstance(args[0], _Range) else [args[0]]) if first else ranges[0]
+            if len({len(r) for r in ranges + [target]}) != 1:
+                raise ExcelError(f"{self.where}: {name} ranges differ in size")
+            rows = [i for i in range(len(target)) if all(test(r[i]) for r, (_, test) in zip(ranges, pairs))]
+            if name == "COUNTIFS":
+                return float(len(rows))
+            nums = [target[i] for i in rows if isinstance(target[i], (int, float)) and not isinstance(target[i], bool)]
+            if name == "SUMIFS":
+                return float(sum(nums))
+            if not nums:
+                raise ExcelError(f"{self.where}: AVERAGEIFS of no numbers")
+            return sum(nums) / len(nums)
+        if name == "AVERAGEIF":
+            rng = args[0].values if isinstance(args[0], _Range) else [args[0]]
+            test = _criterion(self._scalar(args[1]))
+            avg = args[2].values if len(args) > 2 and isinstance(args[2], _Range) else rng
+            nums = [s for v, s in zip(rng, avg) if test(v) and isinstance(s, (int, float)) and not isinstance(s, bool)]
+            if not nums:
+                raise ExcelError(f"{self.where}: AVERAGEIF of no numbers")
+            return sum(nums) / len(nums)
+        if name == "SUBTOTAL":
+            code = int(self._num(self._scalar(args[0]))) if args else 0
+            inner = SUBTOTAL.get(code % 100 if code > 100 else code)
+            if inner is None:
+                raise FormulaError(f"{self.where}: unsupported SUBTOTAL function {code}")
+            return self._apply(inner, args[1:])
         if name == "SUMPRODUCT":
             cols = [a.values if isinstance(a, _Range) else [a] for a in args]
             if len({len(c) for c in cols}) != 1:
