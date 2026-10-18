@@ -21,7 +21,11 @@ def _plant_for(task_id: str, inputs: list) -> Callable[[Path], None]:
         for item in inputs:
             origin = CORPUS / item["corpus"]
             if not origin.is_file():
-                raise RuntimeError(f"{task_id}: input {item['corpus']} is not in {CORPUS}")
+                hint = ("" if item["corpus"].isascii() else
+                        " Its name has non-ASCII characters: the package was probably unzipped by a tool that ignores "
+                        "UTF-8 names (Git Bash's unzip). Unzip it with Windows Explorer, tar -xf or "
+                        "python -m zipfile -e instead.")
+                raise RuntimeError(f"{task_id}: input {item['corpus']} is not in {CORPUS}.{hint}")
             target = workdir / item["path"]
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(origin, target)

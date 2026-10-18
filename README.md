@@ -15,6 +15,8 @@ Plus two warm-ups (`verify`) and a smoke test. [USE_CASES.md](USE_CASES.md) list
 
 ```bash
 # 1. Get the framework: unzip the latest release (github.com/amd/ai-pc-evals/releases), or clone the repo.
+#    Unzip with Windows Explorer, `tar -xf` or `python -m zipfile -e`: some task files have non-ASCII names,
+#    which Git Bash's `unzip` garbles.
 cd ai-pc-evals-<version>
 python -m pip install -r requirements.txt
 claude auth login                 # Claude Code: the judge, and an agent you can test
