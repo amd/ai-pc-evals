@@ -21,7 +21,8 @@ from ._support import clip
 EXTRACT_CAP = 15000
 XLSX_ROWS = 25
 XLSX_COLS = 20
-TEXT_SUFFIXES = frozenset({".txt", ".md", ".csv", ".tsv", ".json", ".yaml", ".yml"})
+TEXT_SUFFIXES = frozenset({".txt", ".md", ".csv", ".tsv", ".json", ".yaml", ".yml", ".ini", ".cfg", ".conf",
+                           ".toml", ".lock", ".log", ".xml", ".py", ".sh", ".ps1", ".bat", ".cmd", ".env"})
 CHART_LIBS = ("chart.js", "chartjs", "plotly", "d3", "echarts", "vega", "highcharts")
 
 
@@ -214,8 +215,25 @@ def html_text(path: Path) -> str:
     return "\n".join([head, *parser.parts])
 
 
+def decode_text(raw: bytes) -> str:
+    """Bytes as text, honouring a UTF-8 or UTF-16 byte-order mark (PowerShell 5.1 writes UTF-16)."""
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw[3:].decode("utf-8", errors="replace")
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", errors="replace")
+    return raw.decode("utf-8", errors="replace")
+
+
 def plain_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    return decode_text(path.read_bytes()).replace("\r\n", "\n")
+
+
+def _looks_like_text(path: Path) -> bool:
+    """An unknown file type is shown to the judge if it decodes as text (no NUL bytes outside UTF-16)."""
+    head = path.read_bytes()[:8192]
+    if head.startswith((b"\xff\xfe", b"\xfe\xff", b"\xef\xbb\xbf")):
+        return True
+    return b"\x00" not in head
 
 
 EXTRACTORS: Dict[str, Callable[[Path], str]] = {
@@ -233,6 +251,8 @@ EXTRACTORS: Dict[str, Callable[[Path], str]] = {
 def extract(path: Path, cap: int = EXTRACT_CAP) -> str:
     """*path* as capped text; a file that cannot be read says so instead of passing."""
     reader = EXTRACTORS.get(path.suffix.lower())
+    if reader is None and _looks_like_text(path):
+        reader = plain_text
     if reader is None:
         size = path.stat().st_size
         return f"[{path.suffix or 'no extension'} file, {size} bytes; not extracted]"
