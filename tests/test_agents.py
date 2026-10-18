@@ -549,3 +549,20 @@ def test_a_time_capped_agent_takes_its_children_with_it(tmp_path):
 def test_a_custom_graded_home_is_a_protected_path(tmp_path, monkeypatch):
     monkeypatch.setenv("KW_GRADED_HOME", str(tmp_path / "Secret Grades"))
     assert str(tmp_path / "Secret Grades").lower() in run_eval.protected_markers()
+
+
+def test_one_build_at_a_time_per_fixtures_folder(tmp_path, monkeypatch):
+    lock = tmp_path / ".kw-build.lock"
+    with run_eval.fixtures_lock(tmp_path):
+        assert lock.read_text(encoding="utf-8").split()[0] == str(__import__("os").getpid())
+        # A second run waits; given no time, it gives up rather than build under the first.
+        with pytest.raises(run_eval.EvalError, match="another run"):
+            with run_eval.fixtures_lock(tmp_path, wait_s=0.2, poll_s=0.05):
+                pass
+    assert not lock.exists()
+
+
+def test_a_crashed_runs_build_lock_is_taken_over(tmp_path):
+    (tmp_path / ".kw-build.lock").write_text("999999999\n", encoding="utf-8")  # no such process
+    with run_eval.fixtures_lock(tmp_path, wait_s=1):
+        pass
