@@ -190,3 +190,32 @@ def test_dates_compute_as_excel_serials(tmp_path):
     assert wb.value("Data", 2, 1) == "Late"
     assert wb.value("Data", 3, 1) == 2.0
     assert xlsx_eval.excel_serial(dt.date(2026, 10, 15)) == 46310.0  # Excel's serial for that day
+
+
+def test_multi_criteria_conditional_and_error_functions(tmp_path):
+    def build(wb, ws):
+        ws.append(["region", "status", "amount"])
+        ws.append(["East", "Open", 100])
+        ws.append(["East", "Closed", 50])
+        ws.append(["West", "Open", 30])
+        ws.append(["East", "Open", 20])
+        ws["E1"] = '=SUMIFS(C2:C5, A2:A5, "East", B2:B5, "Open")'
+        ws["E2"] = '=COUNTIFS(A2:A5, "East", C2:C5, ">=50")'
+        ws["E3"] = '=AVERAGEIF(A2:A5, "East", C2:C5)'
+        ws["E4"] = '=AVERAGEIFS(C2:C5, B2:B5, "Open")'
+        ws["E5"] = "=SUBTOTAL(9, C2:C5)"
+        ws["E6"] = "=SUBTOTAL(101, C2:C5)"
+        ws["E7"] = "=ISERROR(1/0)"
+        ws["E8"] = "=ISERROR(C2)"
+        ws["E9"] = '=IFS(C2>500, "big", C2>50, "mid", TRUE, "small")'
+        ws["E10"] = '=IFS(C2>50, "first", 1/0, "never reached")'
+        ws["E11"] = "=IFNA(C2*2, 0)"
+        ws["E12"] = '=AVERAGEIF(A2:A5, "North", C2:C5)'
+        ws["E13"] = "=IFERROR(E12, -1)"
+
+    wb = xlsx_eval.Workbook(book(tmp_path, build))
+    got = [wb.value("Data", r, 5) for r in range(1, 12)]
+    assert got == [120.0, 2.0, 170 / 3, 50.0, 200.0, 50.0, True, False, "mid", "first", 200.0]
+    assert wb.value("Data", 13, 5) == -1  # no match: #DIV/0! in Excel, caught by IFERROR
+    with pytest.raises(xlsx_eval.FormulaError):
+        wb.value("Data", 12, 5)

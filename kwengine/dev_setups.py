@@ -203,6 +203,8 @@ def user_edits_in_progress(workdir: Path) -> None:
             "(knowledgework/developer/spec.json)."
         )
 
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+
     def run(*args: str) -> None:
         try:
             subprocess.run(
@@ -212,13 +214,17 @@ def user_edits_in_progress(workdir: Path) -> None:
                 capture_output=True,
                 text=True,
                 stdin=subprocess.DEVNULL,
+                env=env,  # no global hooks, templates or line-ending rules from this machine
             )
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(
                 f"`git {' '.join(args)}` failed in {workdir}: {exc.stderr.strip()}"
             ) from exc
 
-    run("init", "-q")
+    run("init", "-q", "--template=")
+    run("config", "core.autocrlf", "false")
+    run("config", "gc.auto", "0")
+    run("config", "maintenance.auto", "false")
     run("add", "-A")
     run(
         "-c",

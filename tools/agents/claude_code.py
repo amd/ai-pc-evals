@@ -4,12 +4,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .base import Agent, AgentResult, TaskSpec
+from .base import Agent, AgentResult, TaskSpec, run_capped
 
 #: Work tools every task gets. Bash runs Python to write .docx/.pptx/.xlsx files.
 WORK_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep"]
@@ -36,7 +35,8 @@ class ClaudeCode(Agent):
         # Web tools exist only for tasks that need the web, so a fixed-source task can't browse.
         tools = ",".join(self.tools(task))
         # The resolved path: on Windows an npm install is claude.cmd, which a bare "claude" can't launch.
-        cmd = [shutil.which(self.exe) or self.exe, "-p", task.prompt, "--model", self.model, "--restricted", "--strict-mcp-config",
+        # The prompt goes in on stdin: cmd.exe cuts a .cmd's arguments at the first newline.
+        cmd = [shutil.which(self.exe) or self.exe, "-p", "--model", self.model, "--restricted", "--strict-mcp-config",
                "--disable-slash-commands", "--tools", tools, "--allowedTools", tools,
                "--output-format", "stream-json", "--verbose", "--no-session-persistence",
                "--permission-mode", "acceptEdits"]
@@ -57,12 +57,8 @@ class ClaudeCode(Agent):
         timed_out = False
         with transcript.open("w", encoding="utf-8") as out:
             try:
-                proc = subprocess.run(self.command(task), cwd=task.folder, stdout=out, stderr=subprocess.PIPE,
-                                      text=True, encoding="utf-8", errors="replace", env=env,
-                                      timeout=task.timeout_s)
-                stderr, code = proc.stderr, proc.returncode
-            except subprocess.TimeoutExpired as e:
-                timed_out, stderr, code = True, (e.stderr or "") if isinstance(e.stderr, str) else "", -1
+                _, stderr, code, timed_out = run_capped(self.command(task), timeout=task.timeout_s, input=task.prompt,
+                                                        stdout=out, cwd=task.folder, env=env)
             except OSError as e:  # the CLI vanished or can't be launched
                 return AgentResult(answer="", wall_seconds=0.0, model=self.model, error=f"{self.exe}: {e}",
                                    error_kind="unavailable")

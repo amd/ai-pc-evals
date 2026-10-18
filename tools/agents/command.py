@@ -18,12 +18,11 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict
 
-from .base import Agent, AgentResult, TaskSpec
+from .base import Agent, AgentResult, TaskSpec, run_capped
 
 
 class CommandAgent(Agent):
@@ -52,16 +51,18 @@ class CommandAgent(Agent):
         env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
         env.update({k: str(v) for k, v in self.spec.get("env", {}).items()})
         log = log_dir / f"{self.name}.log"
-        start, timed_out, stdout, code = time.monotonic(), False, "", 0
+        if "{prompt}" in "".join(self.spec["cmd"]) and "\n" in task.prompt and cmd[0].lower().endswith((".cmd", ".bat")):
+            # cmd.exe cuts a batch file's arguments at the first newline: the agent would get one line of the task.
+            return AgentResult(answer="", wall_seconds=0.0, model=self.model, error_kind="unavailable",
+                               error=f"agent {self.name}: {cmd[0]} is a batch file, which can't take a multi-line "
+                                     "{prompt}: use {prompt_file}")
+        start = time.monotonic()
         try:
-            proc = subprocess.run(cmd, cwd=task.folder, capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", env=env, timeout=task.timeout_s)
-            stdout, code = proc.stdout, proc.returncode
-            log.write_text(proc.stdout + "\n--- stderr ---\n" + proc.stderr, encoding="utf-8")
-        except subprocess.TimeoutExpired:
-            timed_out = True
+            stdout, stderr, code, timed_out = run_capped(cmd, timeout=task.timeout_s, cwd=task.folder, env=env)
         except OSError as e:
             return AgentResult(answer="", wall_seconds=0.0, model=self.model, error=str(e), error_kind="unavailable")
+        # Kept on a timeout too: what the agent printed before the cap is the evidence of where it got stuck.
+        log.write_text(stdout + "\n--- stderr ---\n" + stderr, encoding="utf-8")
         wall = time.monotonic() - start
         how = self.spec.get("answer", "stdout")
         if how.startswith("file:"):

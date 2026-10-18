@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import math
 import json
 import os
 import re
@@ -303,7 +304,7 @@ def check_leg(leg: Any) -> str:
 
 
 def _non_negative(value: Any, name: str, kind: type) -> None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         raise ValueError(f"{name} must be a non-negative number, got {value!r}")
     if kind is int and not isinstance(value, int):
         raise ValueError(f"{name} must be a whole number, got {value!r}")
@@ -362,8 +363,11 @@ def record(
         "notes": notes,
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         **({} if reported_cost_usd is None else {"reported_cost_usd": reported_cost_usd}),
-        **dict(extra or {}),
     }
+    clash = sorted(set(extra or {}) & set(result))
+    if clash:
+        raise ValueError(f"extra fields {clash} would overwrite the recorded result's own")
+    result.update(extra or {})
     (scrubber or Scrubber.from_environment()).write_json(path, result, indent=2)
     return path
 
