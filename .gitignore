@@ -3,6 +3,8 @@ fixtures/
 **/fixtures/
 # ...except the tiny committed smoke fixture (a task input with "source": "repo").
 !knowledgework/fixtures/
+# ...and the assistant suite's documents (copied from gaia's tests/fixtures, so their paths say 'fixtures').
+!knowledgework/assistant/corpus/**/fixtures/
 pinned_cache/
 cache/
 runs/
@@ -59,3 +61,6 @@ Thumbs.db
 
 # Claude Code session state and agent worktrees
 .claude/
+
+# The assistant suite's documents are committed task inputs, whatever their type.
+!knowledgework/assistant/corpus/**

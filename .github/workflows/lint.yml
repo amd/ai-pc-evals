@@ -37,7 +37,7 @@ jobs:
         run: for f in $(git ls-files '*.json'); do python -m json.tool "$f" >/dev/null || { echo "::error file=$f::invalid JSON"; exit 1; }; done
       - name: Scripts are committed with LF
         run: |
-          bad=$(git ls-files --eol -- '*.sh' '*.py' '*.bat' '*.cmd' '*.ps1' | grep -v '^i/lf' || true)
+          bad=$(git ls-files --eol -- '*.sh' '*.py' '*.bat' '*.cmd' '*.ps1' ':!knowledgework/assistant/corpus/**' | grep -v '^i/lf' || true)
           if [ -n "$bad" ]; then echo "::error::committed with CRLF or mixed endings:"; echo "$bad"; exit 1; fi
       - name: Checkout line endings follow .gitattributes
         run: |

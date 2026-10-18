@@ -322,6 +322,9 @@ def _git_repo(workdir: Path, setup: str) -> Callable[..., str]:
     run("symbolic-ref", "HEAD", "refs/heads/main")
     run("config", "core.autocrlf", "false")
     run("config", "commit.gpgsign", "false")
+    # No background gc/maintenance: its lock files come and go while a probe copies the folder.
+    run("config", "gc.auto", "0")
+    run("config", "maintenance.auto", "false")
     return run
 
 
