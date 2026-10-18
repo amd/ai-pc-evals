@@ -21,11 +21,14 @@ digests (salt in the manifest), never as the strings themselves:
 
 from __future__ import annotations
 
+import bz2
 import gzip
 import hashlib
 import io
+import lzma
 import json
 import re
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
@@ -48,9 +51,12 @@ TEXT_SUFFIXES = frozenset(
 OOXML_SUFFIXES = frozenset({".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp"})
 ZIP_SUFFIXES = frozenset({".zip"})
 GZIP_SUFFIXES = frozenset({".gz"})
+TAR_SUFFIXES = frozenset({".tar"})
+#: Compressed streams the standard library opens: the name without the suffix is what is inside.
+STREAM_SUFFIXES = {".gz": "", ".tgz": ".tar", ".bz2": "", ".tbz2": ".tar", ".xz": "", ".txz": ".tar"}
 #: Text inside these is compressed or binary: not read (see secrets/README.md).
 UNREAD_SUFFIXES = frozenset(
-    ".pdf .7z .rar .xz .bz2 .zst .tar .png .jpg .jpeg .gif .bmp .webp .ico .mp4 .mkv "
+    ".pdf .7z .rar .zst .png .jpg .jpeg .gif .bmp .webp .ico .mp4 .mkv "
     ".mov .avi .mp3 .wav .flac .exe .dll .so .dylib .pyd .whl .db .sqlite .sqlite3 "
     ".pack .idx .bin .onnx .gguf .safetensors .pt .pth .iso .msi .lnk".split()
 )
@@ -205,6 +211,38 @@ def _zip_texts(raw: bytes, depth: int) -> Iterator[Tuple[str, str]]:
                 yield name, text
 
 
+def _tar_texts(raw: bytes, depth: int) -> Iterator[Tuple[str, str]]:
+    try:
+        tf = tarfile.open(fileobj=io.BytesIO(raw))  # noqa: SIM115 - closed below
+    except (tarfile.TarError, OSError, ValueError, EOFError):
+        return
+    with tf:
+        try:
+            members = tf.getmembers()[:MAX_ZIP_MEMBERS]
+        except (tarfile.TarError, OSError, EOFError):
+            return
+        for info in members:
+            if not info.isfile() or info.size > MAX_FILE_BYTES:
+                continue
+            try:
+                f = tf.extractfile(info)
+                data = f.read() if f else b""
+            except (tarfile.TarError, OSError, EOFError):
+                continue
+            yield from texts_of_bytes(info.name, data, depth + 1)
+
+
+def _decompress(suffix: str, raw: bytes) -> Optional[bytes]:
+    try:
+        if suffix in (".gz", ".tgz"):
+            return gzip.decompress(raw)
+        if suffix in (".bz2", ".tbz2"):
+            return bz2.decompress(raw)
+        return lzma.decompress(raw)
+    except (OSError, EOFError, ValueError, lzma.LZMAError):
+        return None
+
+
 def texts_of_bytes(name: str, raw: bytes, depth: int = 0) -> Iterator[Tuple[str, str]]:
     """``(label, text)`` for every readable text inside *raw* (members of zips too)."""
     suffix = Path(name).suffix.lower()
@@ -215,12 +253,15 @@ def texts_of_bytes(name: str, raw: bytes, depth: int = 0) -> Iterator[Tuple[str,
             for member, text in _zip_texts(raw, depth):
                 yield f"{name}!{member}", _strip_markup(text) if suffix in OOXML_SUFFIXES else text
         return
-    if suffix in GZIP_SUFFIXES:
-        try:
-            inner = gzip.decompress(raw[: MAX_FILE_BYTES])
-        except (OSError, EOFError, ValueError):
-            return
-        yield from texts_of_bytes(name[: -len(suffix)], inner[:MAX_FILE_BYTES], depth + 1)
+    if suffix in STREAM_SUFFIXES:
+        inner = _decompress(suffix, raw[:MAX_FILE_BYTES]) if depth < 3 else None
+        if inner is not None:
+            yield from texts_of_bytes(name[: -len(suffix)] + STREAM_SUFFIXES[suffix], inner[:MAX_FILE_BYTES], depth + 1)
+        return
+    if suffix in TAR_SUFFIXES:
+        if depth < 3:
+            for member, text in _tar_texts(raw, depth):
+                yield f"{name}!{member}", text
         return
     if raw[:4] == b"PK\x03\x04" and depth < 2:
         for member, text in _zip_texts(raw, depth):
