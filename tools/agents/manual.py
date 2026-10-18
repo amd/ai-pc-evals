@@ -23,7 +23,9 @@ from .base import Agent, AgentResult, TaskSpec
 def set_clipboard(text: str) -> bool:
     """Best effort: Windows (PowerShell), macOS (pbcopy), Linux (xclip). False when none is there."""
     if sys.platform == "win32":
-        cmd = ["powershell", "-NoProfile", "-Command", "$input | Set-Clipboard"]
+        # Read stdin as UTF-8 whatever the PC's code page: a prompt's dashes and quotes must paste as they are.
+        cmd = ["powershell", "-NoProfile", "-Command",
+               "[Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"]
     elif shutil.which("pbcopy"):
         cmd = ["pbcopy"]
     elif shutil.which("xclip"):
