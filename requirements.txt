@@ -14,3 +14,4 @@ reportlab>=4.0
 requests>=2.31
 cryptography>=42      # the encrypted answer bundle (secrets/answers.enc)
 keyring>=25           # optional home for its passphrase
+pytest>=8  # the developer suite's probes run each project's tests
