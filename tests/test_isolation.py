@@ -200,29 +200,33 @@ def test_a_percent_in_an_argument_reaches_the_agent_literally(tmp_path, home, mo
     assert rc == 0 and "['50%', '%USERNAME%']" in out
 
 
-@pytest.mark.parametrize("name", ["Users", "Everyone", "me"])
+@pytest.mark.parametrize("name", ["Users", "Everyone", "me", r"PC\me", r".\me", "me@corp"])
 def test_the_agent_user_cannot_be_a_group_or_the_maintainer(name):
     with pytest.raises(OSError, match="separate, standard local user"):
         isolation.agent_user({"KW_AGENT_USER": name, "USERNAME": "me"})
 
 
-def test_an_agent_that_ends_its_task_early_but_keeps_running_is_stopped(tmp_path, home, monkeypatch):
-    # It wrote rc.txt itself; whatever it started still runs as another user (its owner can't be read).
+def test_task_folders_open_only_for_their_own_turn(tmp_path, monkeypatch):
+    # The agent user is denied every task folder up front, let into one for its turn, and shut out again once the
+    # task is recorded: no task's agent can read or change another task's work before grading.
+    import run_eval
+    from agents.base import Agent, AgentResult
+
     calls = []
-    real_run = subprocess.run
+    monkeypatch.setenv("KW_AGENT_USER", "kwagent")
+    monkeypatch.setenv("USERNAME", "maintainer")
+    monkeypatch.setattr(isolation, "protect", lambda paths, user: calls.append(("deny", [p.name for p in paths])))
+    monkeypatch.setattr(isolation, "allow", lambda path, user: calls.append(("allow", path.name)))
+    monkeypatch.setattr(run_eval, "EVAL_HOME", tmp_path / "home")
 
-    def fake(argv, **kw):
-        if argv[0] == "runas":
-            work = isolation.work_root()
-            (next(work.iterdir()) / "rc.txt").write_text("0", encoding="utf-8")
-            return subprocess.CompletedProcess(argv, 0, "", "")
-        if argv[0] == "taskkill":
-            calls.append(argv)
-            return subprocess.CompletedProcess(argv, 1, "", "Access denied")
-        return real_run(argv, **kw)
+    class Fake(Agent):
+        name = "fake"
 
-    monkeypatch.setattr(isolation.subprocess, "run", fake)
-    monkeypatch.setattr(isolation, "_foreign_survivors", lambda before: [4242])
-    with pytest.raises(isolation.StrayProcesses):
-        isolation.run_as("kwagent", ["agent.exe"], timeout=30, cwd=tmp_path, env={})
-    assert calls and calls[0][:2] == ["taskkill", "/F"]
+        def run(self, task, log_dir):
+            calls.append(("run", task.id))
+            return AgentResult(answer="done", wall_seconds=1.0, model="m")
+
+    monkeypatch.setattr(run_eval, "get_agent", lambda name, model: Fake("m"))
+    run_eval.run("fake", "m", "verify", ["verify-02"], tmp_path / "out", tmp_path / "fx", "m", do_grade=False)
+    assert calls[0] == ("deny", [".baseline", "kw-run.json", ".records"])
+    assert calls[1:] == [("deny", ["verify-02"]), ("allow", "verify-02"), ("run", "verify-02"), ("deny", ["verify-02"])]
