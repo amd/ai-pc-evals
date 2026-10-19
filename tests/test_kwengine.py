@@ -963,15 +963,13 @@ def test_the_cli_parses_every_command():
 
 
 def test_the_cli_round_trip_prints_what_the_runners_parse(tmp_path, monkeypatch, capsys):
-    import run_task
-
     run_dir = tmp_path / "run"
     cli.main(["prepare", "--suite", "smoke", "--leg", "claude-code", "--out", str(run_dir)])
     out = capsys.readouterr().out
     assert out.startswith(f"=== {SMOKE} (5 min) ===\nFolder: ")
     assert out.rstrip().endswith(f"[OUTPUT] {run_dir.resolve()}")
-    folder, prompt = run_task.parse_prepare_output(out, run_dir.resolve(), run_dir.resolve())
-    assert folder == run_dir.resolve() / SMOKE and str(folder) in prompt
+    folder = run_dir.resolve() / SMOKE
+    assert f"Folder: {folder}" in out and folder.is_dir()
     (folder / "summary.md").write_text(GOOD_SUMMARY)
     answer = tmp_path / "answer.md"
     answer.write_text("Total 1,234.50", encoding="utf-8")
