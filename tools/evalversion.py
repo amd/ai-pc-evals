@@ -35,7 +35,10 @@ def tasks_fingerprint(repo: Path = REPO) -> str:
     for rel in FINGERPRINTED:
         root = repo / rel
         if root.is_dir():
-            files = sorted(f for f in root.rglob("*") if f.is_file() and not {"__pycache__", ".pytest_cache"} & set(f.parts))
+            # Sorted by the POSIX path string: Path ordering ignores case on Windows, so the same files would hash in
+            # a different order on Linux (where the release is built) than on the eval PC.
+            files = sorted((f for f in root.rglob("*") if f.is_file() and not {"__pycache__", ".pytest_cache"} & set(f.parts)),
+                           key=lambda f: f.relative_to(repo).as_posix())
         else:
             files = [root] if root.is_file() else []
         for f in files:
