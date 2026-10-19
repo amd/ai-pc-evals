@@ -117,9 +117,12 @@ def preflight() -> None:
 
 
 def fill_tokens(prompt: str, agent_name: str, leg: str) -> str:
-    """The runner fills what the harness doesn't: pc-09 names its output per mode and run."""
+    """The runner fills what the harness doesn't: pc-09 names its output per mode and run; {next_monday}
+    (pc-06, pc-07) is the first Monday after today, if prepare has not already filled it."""
+    from kwengine.schema import fill_dates
+
     route = "CLOUD" if "cloud" in f"{agent_name} {leg}".lower() else "LOCAL"
-    return prompt.replace("{route}", route).replace("{run_id}", leg)
+    return fill_dates(prompt.replace("{route}", route).replace("{run_id}", leg))
 
 
 def protected_markers() -> List[str]:
