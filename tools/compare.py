@@ -43,8 +43,10 @@ def load(arg: str) -> dict:
     card_path, run_dir = locate(arg)
     card = json.loads(card_path.read_text(encoding="utf-8"))
     version = {}
-    if run_dir and (run_dir / "eval-version.json").is_file():
-        version = json.loads((run_dir / "eval-version.json").read_text(encoding="utf-8"))
+    for d in (card_path.parent, run_dir):  # graded folder first: the run folder may be on another machine
+        if d and (d / "eval-version.json").is_file():
+            version = json.loads((d / "eval-version.json").read_text(encoding="utf-8"))
+            break
     tasks = {}
     for t in card.get("tasks", []):
         j = t.get("judge") or {}
