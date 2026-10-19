@@ -377,7 +377,7 @@ def _keyed(grades: Dict[str, Any], keys: Sequence[str]) -> Dict[str, Any]:
             grades = inner[0]
     out = dict(grades)
     # A near match is used only one-to-one: a returned key that is another attempt's exact id, or that would
-    # serve two attempts ("pc-06-cfo-day" for day1..day5, "dev-tr-8319" for its -cb twin), is never shared.
+    # serve two attempts ("pc-06-cfo-day" for its scored days), is never shared.
     spare = [g for g in grades if isinstance(g, str) and g and g not in keys]
     claims: Dict[str, List[str]] = {}
     for k in keys:
