@@ -75,7 +75,7 @@ def test_fetch_replaces_a_corrupt_cached_copy(cache, monkeypatch):
 
 
 def test_keys_dir_inside_a_granted_folder_is_refused(tmp_path, monkeypatch):
-    monkeypatch.setenv("GAIA_KW_EVAL_HOME", str(tmp_path / "eval"))
+    monkeypatch.setenv("KW_EVAL_HOME", str(tmp_path / "eval"))
     monkeypatch.setattr(bf, "KEYS_DIR", tmp_path / "eval" / "keys")
     with pytest.raises(SystemExit, match="agents under test"):
         bf.check_keys_dir(tmp_path / "fixtures")
