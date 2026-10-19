@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from typing import Any, Dict, List, Optional, Tuple
 
 FUNCTIONS = ("SUM", "AVERAGE", "MIN", "MAX", "ROUND", "ABS", "COUNT", "COUNTA", "IF", "IFS", "IFERROR", "IFNA",
@@ -519,7 +519,12 @@ class _Parser:
             # Excel rounds half away from zero on the number as it shows it (15 significant digits), so
             # ROUND(1.005, 2) is 1.01 although the binary double is 1.00499999...
             d = Decimal(format(x, ".15g"))
-            return float(d.quantize(Decimal(1).scaleb(-n), rounding=ROUND_HALF_UP))
+            try:
+                with localcontext() as ctx:  # room for any double's digits: ROUND(1E+30, 2) must not overflow
+                    ctx.prec = 400
+                    return float(d.quantize(Decimal(1).scaleb(-n), rounding=ROUND_HALF_UP))
+            except InvalidOperation as exc:
+                raise FormulaError(f"{self.where}: ROUND({x}, {n}) is out of range") from exc
         if name in ("AND", "OR"):
             vals = [self._bool(v) for a in args for v in (a.values if isinstance(a, _Range) else [a]) if v is not None]
             return all(vals) if name == "AND" else any(vals)

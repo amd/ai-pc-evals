@@ -74,6 +74,13 @@ def _no_window() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Write via a temp file and a rename: a reader (``stop``, another process) never sees a half-written file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _alive(pid: int) -> bool:
     import psutil  # pylint: disable=import-outside-toplevel
 
@@ -99,10 +106,7 @@ def supervise(path: Path, fps: int) -> int:
             stderr=log,
             creationflags=_no_window(),
         )
-        pid_file.write_text(
-            json.dumps({"supervisor": os.getpid(), "ffmpeg": proc.pid, "fps": fps}),
-            encoding="utf-8",
-        )
+        _write_atomic(pid_file, json.dumps({"supervisor": os.getpid(), "ffmpeg": proc.pid, "fps": fps}))
         status: Dict[str, Any] = {}
         try:
             while True:
@@ -127,7 +131,7 @@ def supervise(path: Path, fps: int) -> int:
                     break
                 time.sleep(POLL_S)
         finally:
-            status_file.write_text(json.dumps(status), encoding="utf-8")
+            _write_atomic(status_file, json.dumps(status))
             pid_file.unlink(missing_ok=True)
             stop_file.unlink(missing_ok=True)
     return int(status.get("code", -1))

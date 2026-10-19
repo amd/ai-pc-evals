@@ -252,6 +252,7 @@ def test_a_directly_referenced_cell_reads_like_a_one_cell_range(tmp_path, formul
     ("=ROUND(1234.5, -2)", 1200.0),
     ("=ROUND(0.285, 2)", 0.29),
     ("=ROUND(1.0049, 2)", 1.0),
+    ("=ROUND(1E+30, 2)", 1e30),     # a huge value must not overflow the decimal context
 ])
 def test_round_works_on_the_decimal_excel_shows(tmp_path, formula, expected):
     def build(wb, ws):

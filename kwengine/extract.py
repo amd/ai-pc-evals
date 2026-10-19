@@ -343,9 +343,9 @@ def _docx_blocks(el, out: List[str], doc, counts: Dict[str, int], nested: bool =
         elif tag == _W + "tbl":
             counts["tables"] += 1
             number, rows = counts["tables"], []
-            for row in child.iterchildren(_W + "tr"):
+            for row in _unwrapped(child, "tr"):
                 cells = []
-                for cell in row.iterchildren(_W + "tc"):
+                for cell in _unwrapped(row, "tc"):
                     inner: List[str] = []
                     _docx_blocks(cell, inner, doc, counts, nested=True)
                     cells.append(" / ".join(inner))
@@ -356,6 +356,21 @@ def _docx_blocks(el, out: List[str], doc, counts: Dict[str, int], nested: bool =
                 out += [f"[table {number}]", *rows]
         else:  # w:sdt / w:sdtContent (content controls), w:customXml, w:ins around blocks, ...
             _docx_blocks(child, out, doc, counts, nested)
+
+
+#: Elements that only wrap rows or cells (content controls, custom XML, tracked insertions): look inside them.
+_WRAPPERS = ("sdt", "sdtContent", "customXml", "ins")
+
+
+def _unwrapped(parent, tag: str):
+    """The *tag* children of *parent* (``tr`` of a table, ``tc`` of a row), found through any wrappers: a Word
+    template's repeating section puts whole rows inside a content control."""
+    for el in parent.iterchildren():
+        name = el.tag
+        if name == _W + tag:
+            yield el
+        elif name in tuple(_W + w for w in _WRAPPERS):
+            yield from _unwrapped(el, tag)
 
 
 def docx_text(path: Path) -> str:
@@ -441,8 +456,13 @@ def decode_text(raw: bytes) -> str:
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
-        # Not UTF-8: Excel saves "CSV" in the ANSI code page (cp1252 on Western Windows); "€" and "é" stay legible.
-        return raw.decode("cp1252", errors="replace")
+        pass
+    # Mostly UTF-8 with a stray bad byte: keep it UTF-8 (one replaced byte, not a whole file of mojibake). No
+    # valid multi-byte sequences at all: Excel saved the "CSV" in the ANSI code page (cp1252 on Western Windows).
+    as_utf8 = raw.decode("utf-8", errors="replace")
+    bad = as_utf8.count("\ufffd")
+    good = sum(1 for ch in as_utf8 if ord(ch) > 127 and ch != "\ufffd")
+    return as_utf8 if good > bad else raw.decode("cp1252", errors="replace")
 
 
 def plain_text(path: Path) -> str:

@@ -27,7 +27,7 @@ def test_the_wrapper_calls_the_agent_doubles_percent_and_stops_if_it_cannot_ente
     bat = isolation.wrapper(["agent.cmd", "--flag", "a b", "50%"], tmp_path / "task", {"X": "100% sure"}, tmp_path)
     assert 'set "X=100%% sure"' in bat
     assert f'cd /d "{tmp_path / "task"}" || (> "{tmp_path / "rc.txt"}" echo 98& exit /b 98)' in bat
-    assert 'call agent.cmd --flag "a b" 50%% <' in bat and "stdout.txt" in bat and "stderr.txt" in bat
+    assert 'call agent.cmd --flag "a b" 50%%%% <' in bat and "stdout.txt" in bat and "stderr.txt" in bat
     assert bat.rstrip().endswith(f'> "{tmp_path / "rc.txt"}" echo %ERRORLEVEL%')
 
 
@@ -190,3 +190,39 @@ def test_a_taskkill_that_hangs_counts_as_not_stopped(monkeypatch):
     monkeypatch.setattr(isolation.subprocess, "run", slow)
     stopped, how = isolation.stop_user_processes("kwagent")
     assert not stopped and "elevated prompt" in how
+
+
+@pytest.mark.skipif(not WINDOWS, reason="runas and batch files are Windows-only")
+def test_a_percent_in_an_argument_reaches_the_agent_literally(tmp_path, home, monkeypatch):
+    monkeypatch.setattr(isolation.subprocess, "run", _fake_runas([]))
+    out, _, rc, _ = isolation.run_as("kwagent", [sys.executable, "-c", "import sys; print(sys.argv[1:])", "50%",
+                                                 "%USERNAME%"], timeout=30, cwd=tmp_path, env={})
+    assert rc == 0 and "['50%', '%USERNAME%']" in out
+
+
+@pytest.mark.parametrize("name", ["Users", "Everyone", "me"])
+def test_the_agent_user_cannot_be_a_group_or_the_maintainer(name):
+    with pytest.raises(OSError, match="separate, standard local user"):
+        isolation.agent_user({"KW_AGENT_USER": name, "USERNAME": "me"})
+
+
+def test_an_agent_that_ends_its_task_early_but_keeps_running_is_stopped(tmp_path, home, monkeypatch):
+    # It wrote rc.txt itself; whatever it started still runs as another user (its owner can't be read).
+    calls = []
+    real_run = subprocess.run
+
+    def fake(argv, **kw):
+        if argv[0] == "runas":
+            work = isolation.work_root()
+            (next(work.iterdir()) / "rc.txt").write_text("0", encoding="utf-8")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[0] == "taskkill":
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 1, "", "Access denied")
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(isolation.subprocess, "run", fake)
+    monkeypatch.setattr(isolation, "_foreign_survivors", lambda before: [4242])
+    with pytest.raises(isolation.StrayProcesses):
+        isolation.run_as("kwagent", ["agent.exe"], timeout=30, cwd=tmp_path, env={})
+    assert calls and calls[0][:2] == ["taskkill", "/F"]

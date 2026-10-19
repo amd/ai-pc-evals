@@ -48,6 +48,16 @@ NEXT_MONDAY_TOKEN = "{next_monday}"
 SCHEDULE_TZ = "America/Chicago"
 
 
+def _us_daylight_time(utc: datetime) -> bool:
+    """US daylight time (since 2007): from 2:00 local on the second Sunday of March to 2:00 local on the first
+    Sunday of November; in UTC for Central time, 08:00 and 07:00."""
+    def sunday(month: int, nth: int) -> datetime:
+        first = datetime(utc.year, month, 1, tzinfo=timezone.utc)
+        return first + timedelta(days=(6 - first.weekday()) % 7 + 7 * (nth - 1))
+
+    return sunday(3, 2) + timedelta(hours=8) <= utc < sunday(11, 1) + timedelta(hours=7)
+
+
 def next_monday(when: Optional[datetime] = None) -> str:
     """The first Monday strictly after *when*'s day in America/Chicago (default: now), as an ISO date.
 
@@ -60,8 +70,9 @@ def next_monday(when: Optional[datetime] = None) -> str:
         from zoneinfo import ZoneInfo  # noqa: PLC0415
 
         day = when.astimezone(ZoneInfo(SCHEDULE_TZ)).date()
-    except Exception:  # noqa: BLE001 - no time-zone database (the tzdata package on Windows): Central Standard Time
-        day = (when.astimezone(timezone.utc) - timedelta(hours=6)).date()
+    except Exception:  # noqa: BLE001 - no time-zone database (the tzdata package on Windows): US Central rules
+        utc = when.astimezone(timezone.utc)
+        day = (utc - timedelta(hours=5 if _us_daylight_time(utc) else 6)).date()
     return (day + timedelta(days=7 - day.weekday())).isoformat()
 
 
