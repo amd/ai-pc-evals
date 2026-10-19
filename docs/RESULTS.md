@@ -8,8 +8,6 @@ Each run prints a summary table. Every deliverable and the agent's transcript st
 
 ## Recording results
 
-`tools/results_tables.py` lands with the results-tables change (branch `feat/results-tables`); until it is merged, the commands below are not available.
-
 Every experiment (one agent, one model, one machine) is recorded the same way: as an arm of a scoreboard file in `scoreboard/`, one file per agent. `scoreboard/perplexity-computer.json` is the reference.
 
 ```json
