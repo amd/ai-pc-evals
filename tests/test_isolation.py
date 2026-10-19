@@ -180,3 +180,13 @@ def test_a_manual_agent_reports_same_user_even_with_an_agent_user_set(monkeypatc
     monkeypatch.setenv("KW_AGENT_USER", "kwagent")
     assert get_agent("perplexity-computer", "cloud").isolation() == "same-user"
     assert get_agent("claude-code", "haiku").isolation() == "separate-user:kwagent"
+
+
+def test_a_taskkill_that_hangs_counts_as_not_stopped(monkeypatch):
+    def slow(argv, **kw):
+        assert kw.get("timeout") == isolation.STOP_SECONDS
+        raise subprocess.TimeoutExpired(argv, kw["timeout"])
+
+    monkeypatch.setattr(isolation.subprocess, "run", slow)
+    stopped, how = isolation.stop_user_processes("kwagent")
+    assert not stopped and "elevated prompt" in how
