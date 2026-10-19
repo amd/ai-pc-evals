@@ -146,6 +146,48 @@ def test_every_call_uses_the_current_model_with_structured_output_and_fallbacks(
         assert "temperature" not in kw  # this model rejects sampling parameters
 
 
+def test_office_lock_files_are_not_rendered(tmp_path):
+    side = tmp_path / "out"
+    side.mkdir()
+    png(side / "deck.png")
+    (side / "~$deck.pptx").write_bytes(b"\0" * 162)  # Office's owner file beside an open deck
+    images = vj.side_images([side], tmp_path / "work", "a")
+    assert len(images) == 1 and images.total == 1
+    assert vj.side_images([side / "deck.png", side / "~$deck.pptx"], tmp_path / "work2", "b").total == 1
+
+
+def test_a_deliverable_over_the_page_cap_is_cut_equally_and_the_judge_is_told(tmp_path):
+    long_side = tmp_path / "long"
+    long_side.mkdir()
+    for i in range(15):
+        png(long_side / f"p{i:02d}.png", color=(220, 20, 20))
+    short = [png(tmp_path / "short.png", color=(20, 200, 20))]
+    a = vj.side_images([long_side], tmp_path / "work", "a")
+    assert len(a) == vj.MAX_IMAGES_PER_SIDE and a.total == 15
+    client = FakeClient()
+    vj.judge(client, "make a deck", [], "", a, short, random.Random(1))
+
+    def told(call):
+        return " ".join(b["text"] for b in call["messages"][0]["content"] if b["type"] == "text")
+
+    def images(call):
+        return sum(1 for b in call["messages"][0]["content"] if b["type"] == "image")
+
+    absolute = [c for c in client.calls if c["system"] == vj.RUBRIC]
+    long_call = next(c for c in absolute if images(c) == vj.MAX_IMAGES_PER_SIDE)
+    short_call = next(c for c in absolute if images(c) == 1)
+    assert "has 15 pages; only the first 12 are shown" in told(long_call)
+    assert "pages" not in told(short_call).split("</request>")[-1]
+    pairs = [c for c in client.calls if c["system"] == vj.PAIRWISE]
+    assert len(pairs) == 2 and all(images(c) == vj.MAX_IMAGES_PER_SIDE + 1 for c in pairs)
+    assert "The FIRST deliverable has 15 pages" in told(pairs[0])
+    assert "The SECOND deliverable has 15 pages" in told(pairs[1])
+    # A plain list longer than the cap (a caller that skipped side_images) is cut the same way, and said so.
+    client = FakeClient()
+    vj.absolute(client, "p", list(a) + list(a))
+    assert images(client.calls[0]) == vj.MAX_IMAGES_PER_SIDE and "has 24 pages" in told(client.calls[0])
+
+
 def test_a_preference_that_flips_with_order_is_inconsistent():
     # "first" both times means A when A led and B when B led: pure position bias.
     assert vj.combine(pair_reply("first"), pair_reply("first"))["overall"] == "inconsistent"
