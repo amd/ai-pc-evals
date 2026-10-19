@@ -52,6 +52,11 @@ def agent_user(env: Optional[Mapping[str, str]] = None) -> str:
                  or bare == (env.get("USERNAME") or "").lower()):
         raise OSError(f"{AGENT_USER_ENV}={user} must be a separate, standard local user (see secrets/README.md, "
                       "Layer 4), not you or a group")
+    if user.startswith((".\\", "./")):  # icacls doesn't resolve ".\name": this computer's account by its full name
+        computer = env.get("COMPUTERNAME") or os.environ.get("COMPUTERNAME", ".")
+        user = computer + "\\" + user[2:]
+    if user and user.lstrip("*").upper().startswith("S-1-"):
+        raise OSError(f"{AGENT_USER_ENV}={user}: name the separate agent user, not a SID")
     return user
 
 
