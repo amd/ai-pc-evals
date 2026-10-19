@@ -33,6 +33,7 @@ def test_globs_categories_tags_needs_checks_and_exclusions_combine():
     ({"categories": ["legal"]}, "matches none"),
     ({"tags": ["rag"]}, "on no task here"),
     ({"checks": ["probe"]}, "mechanical, stated or both"),
+    ({"needs": ["none", "webb"]}, "--needs takes"),
     ({"categories": ["document"], "needs": ["none"]}, "select no task"),
 ])
 def test_a_typo_never_runs_an_empty_or_partial_suite(kw, message):

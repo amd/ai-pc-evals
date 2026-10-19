@@ -65,8 +65,14 @@ class Agent:
 
     @property
     def leg(self) -> str:
-        """The run's leg: agent plus model, so two models of one agent never share a run folder."""
-        return f"{self.name}-{self.model}" if self.model else self.name
+        """The run's leg: agent plus model, so two models of one agent never share a run folder.
+
+        A model name may hold characters a folder name can't ("qwen3:8b", "hf/org/model"): they become dashes.
+        """
+        import re  # noqa: PLC0415
+
+        model = re.sub(r"[^A-Za-z0-9._-]+", "-", self.model).strip("-.")
+        return f"{self.name}-{model}" if model else self.name
 
     def check(self) -> Optional[str]:
         """Why this agent can't run here (missing CLI, login...), or None when it can."""

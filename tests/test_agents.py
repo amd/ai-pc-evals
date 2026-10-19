@@ -587,3 +587,9 @@ def test_an_agent_that_finished_but_left_a_background_child_is_not_timed_out(tmp
 
     out, _, rc, timed_out = run_capped([sys.executable, "-c", code], timeout=20)
     assert out.strip() == "done" and rc == 0 and not timed_out and time.monotonic() - start < 15
+
+
+def test_a_model_name_becomes_a_safe_folder_name():
+    assert get_agent("claude-code", "qwen3:8b").leg == "claude-code-qwen3-8b"
+    assert get_agent("claude-code", "hf/org/Model").leg == "claude-code-hf-org-Model"
+    assert get_agent("claude-code", "claude-opus-5-5").leg == "claude-code-claude-opus-5-5"
