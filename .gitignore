@@ -3,7 +3,7 @@ fixtures/
 **/fixtures/
 # ...except the tiny committed smoke fixture (a task input with "source": "repo").
 !knowledgework/fixtures/
-# ...and the assistant suite's documents (copied from gaia's tests/fixtures, so their paths say 'fixtures').
+# ...and the assistant suite's documents (corpus/fixtures/ is committed).
 !knowledgework/assistant/corpus/**/fixtures/
 pinned_cache/
 cache/

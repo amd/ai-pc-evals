@@ -61,8 +61,8 @@ def version(repo: Path = REPO) -> dict:
     else:
         info["commit"] = _git("rev-parse", "--short=12", "HEAD", repo=repo)
         info["dirty"] = bool(_git("status", "--porcelain", "--untracked-files=no", repo=repo))
-    if os.environ.get("GAIA_KW_SNAPSHOT_LOCK"):
-        info["dev_snapshots"] = os.environ["GAIA_KW_SNAPSHOT_LOCK"]
+    if os.environ.get("KW_SNAPSHOT_LOCK"):
+        info["dev_snapshots"] = os.environ["KW_SNAPSHOT_LOCK"]
     return info
 
 

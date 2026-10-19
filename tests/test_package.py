@@ -66,7 +66,7 @@ def test_fingerprint_changes_when_a_probe_changes(tmp_path):
 
 
 def test_a_development_snapshot_pack_is_always_labelled(monkeypatch):
-    monkeypatch.setenv("GAIA_KW_SNAPSHOT_LOCK", "/tmp/dev.lock.json")
+    monkeypatch.setenv("KW_SNAPSHOT_LOCK", "/tmp/dev.lock.json")
     info = evalversion.version()
     assert info["dev_snapshots"] == "/tmp/dev.lock.json"
     assert "DEV SNAPSHOTS: not comparable" in evalversion.label(info)

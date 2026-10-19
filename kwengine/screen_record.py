@@ -2,8 +2,6 @@
 # SPDX-License-Identifier: MIT
 """Record the desktop with ffmpeg while an agent works, and finalize the file cleanly.
 
-Vendored from amd/gaia ``src/gaia/eval/screen_record.py``.
-
 ``start`` and ``stop`` are usually separate commands (``python -m kwengine
 rec-start`` / ``rec-stop``), and only the process holding ffmpeg's stdin can
 send the ``q`` that makes it write a playable MP4. So ``start`` launches a

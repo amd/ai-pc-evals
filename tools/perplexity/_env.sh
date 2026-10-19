@@ -2,11 +2,11 @@
 # shellcheck shell=bash disable=SC2034  # REPO and PY are used by the scripts that source this file
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-KW_HOME="${GAIA_KW_EVAL_HOME:-$HOME/gaia-kw-eval}"
-PY="${GAIA_PY:-python}"
-export GAIA_KW_EVAL_HOME="$KW_HOME" PYTHONUTF8=1
+KW_HOME="${KW_EVAL_HOME:-$HOME/kw-eval}"
+PY="${KW_PY:-python}"
+export KW_EVAL_HOME="$KW_HOME" PYTHONUTF8=1
 
-# Prepare, record and grade run on this repo's engine (kwengine/); no amd/gaia checkout needed.
+# Prepare, record and grade run on this repo's engine (kwengine/).
 need_engine() {
   [ -f "$REPO/kwengine/cli.py" ] || {
     echo "ERROR: $REPO/kwengine is missing; run from a full checkout or release package of this repo" >&2

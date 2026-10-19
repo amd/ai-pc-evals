@@ -38,7 +38,7 @@ def mode(env: Optional[Mapping[str, str]] = None) -> str:
 
 def work_root() -> Path:
     """Where the batch file and its output go: inside the eval home, which the agent user is granted."""
-    home = Path(os.environ.get("GAIA_KW_EVAL_HOME") or Path.home() / "gaia-kw-eval")
+    home = Path(os.environ.get("KW_EVAL_HOME") or Path.home() / "kw-eval")
     return home / ".runas"
 
 

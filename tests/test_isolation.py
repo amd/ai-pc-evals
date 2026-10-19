@@ -50,7 +50,7 @@ def _fake_runas(calls, run_it=True):
 
 @pytest.mark.skipif(not WINDOWS, reason="runas and batch files are Windows-only")
 def test_run_as_returns_output_exit_code_and_stdin_like_run_capped(tmp_path, monkeypatch):
-    monkeypatch.setenv("GAIA_KW_EVAL_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("KW_EVAL_HOME", str(tmp_path / "home"))
     calls = []
     monkeypatch.setattr(isolation.subprocess, "run", _fake_runas(calls))
     monkeypatch.setattr(isolation, "POLL_SECONDS", 0.1)
@@ -65,7 +65,7 @@ def test_run_as_returns_output_exit_code_and_stdin_like_run_capped(tmp_path, mon
 
 @pytest.mark.skipif(not WINDOWS, reason="runas and batch files are Windows-only")
 def test_run_as_times_out_and_says_how_to_stop_the_users_processes(tmp_path, monkeypatch):
-    monkeypatch.setenv("GAIA_KW_EVAL_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("KW_EVAL_HOME", str(tmp_path / "home"))
     calls = []
     monkeypatch.setattr(isolation.subprocess, "run", _fake_runas(calls, run_it=False))
     monkeypatch.setattr(isolation, "POLL_SECONDS", 0.05)
@@ -75,7 +75,7 @@ def test_run_as_times_out_and_says_how_to_stop_the_users_processes(tmp_path, mon
 
 
 def test_a_failed_runas_is_an_unavailable_agent_not_a_hang(tmp_path, monkeypatch):
-    monkeypatch.setenv("GAIA_KW_EVAL_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("KW_EVAL_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(isolation.subprocess, "run",
                         lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "unknown user name"))
     with pytest.raises(OSError, match="Layer 4"):
