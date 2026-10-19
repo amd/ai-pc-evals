@@ -260,7 +260,7 @@ def test_a_task_folder_that_cant_be_read_is_marked_not_a_crash(tmp_path, monkeyp
     import json
 
     import run_eval
-    import turns
+    from kwengine import turns
 
     run_dir = tmp_path / "run"
     (run_dir / "kw-01").mkdir(parents=True)
@@ -275,11 +275,14 @@ def test_a_task_folder_that_cant_be_read_is_marked_not_a_crash(tmp_path, monkeyp
     assert run_eval.check_turns(run_dir) == ["kw-01"]
     result = json.loads((run_dir / ".records" / "kw-01" / "result.json").read_text(encoding="utf-8"))
     assert "could not be read" in result["contaminated"][0]
+    monkeypatch.undo()
+    (run_dir / ".records" / "kw-01" / turns.TURN_END).write_text("{half", encoding="utf-8")  # a damaged seal
+    assert turns.check(run_dir) == ["kw-01"]
 
 
 def test_grade_run_refuses_a_run_changed_after_a_turn(tmp_path, monkeypatch, capsys):
     import grade_run
-    import turns
+    from kwengine import turns
 
     run_dir = tmp_path / "runs" / "leg" / "run"
     run_dir.mkdir(parents=True)
