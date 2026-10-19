@@ -81,6 +81,19 @@ def _write_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def read_json(path: Path, timeout: float = 5.0) -> Any:
+    """A sidecar file as JSON, retried briefly: on Windows a file being renamed into place can't be opened for a
+    moment, and a reader must not fail on that."""
+    deadline = time.time() + timeout
+    while True:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            if time.time() > deadline:
+                raise
+            time.sleep(0.02)
+
+
 def _alive(pid: int) -> bool:
     import psutil  # pylint: disable=import-outside-toplevel
 
@@ -147,7 +160,7 @@ def start(path: Path, fps: int = 15) -> Dict[str, Any]:
     path = Path(path).resolve()
     pid_file = _sidecar(path, ".pid")
     if pid_file.is_file():
-        info = json.loads(pid_file.read_text(encoding="utf-8"))
+        info = read_json(pid_file)
         if _alive(int(info["supervisor"])):
             raise RuntimeError(
                 f"{path} is already being recorded (supervisor pid "
@@ -183,7 +196,7 @@ def start(path: Path, fps: int = 15) -> Dict[str, Any]:
     status_file = _sidecar(path, ".status")
     while time.time() < deadline:
         if pid_file.is_file():
-            return json.loads(pid_file.read_text(encoding="utf-8"))
+            return read_json(pid_file)
         if status_file.is_file():
             break
         time.sleep(POLL_S)
@@ -212,7 +225,7 @@ def stop(path: Path, timeout: int = FINALIZE_TIMEOUT_S + 30) -> Path:
             )
         time.sleep(POLL_S)
     status = (
-        json.loads(status_file.read_text(encoding="utf-8"))
+        read_json(status_file)
         if status_file.is_file()
         else {"code": -1, "error": "the supervisor left no status"}
     )

@@ -1358,7 +1358,7 @@ def test_the_supervisor_stops_ffmpeg_with_q(tmp_path, monkeypatch):
     deadline = time.time() + 5
     while not (tmp_path / "rec.mp4.pid").exists() and time.time() < deadline:
         time.sleep(0.01)
-    assert json.loads((tmp_path / "rec.mp4.pid").read_text())["ffmpeg"] == 4242
+    assert screen_record.read_json(tmp_path / "rec.mp4.pid")["ffmpeg"] == 4242
     assert screen_record.stop(mp4, timeout=5) == mp4.resolve()
     thread.join(5)
     assert written == [b"q"]
