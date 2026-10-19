@@ -81,6 +81,69 @@ def test_compare_counts_contaminated_and_unrecorded_as_fails_and_an_ungraded_tas
 def test_stability_ignores_a_run_the_judge_could_not_grade(tmp_path):
     runs = [card(tmp_path, f"r{i}", {"t1": (None if i == 2 else True, 5), "t2": (None, 0)}) for i in (1, 2, 3)]
     s = stability.summarize([compare.load(r) for r in runs])
-    assert s["t1"]["status"] == "stable-pass" and s["t1"]["runs"] == 2
+    # Two graded passes and one ungraded run is not a stable pass: the third could have failed.
+    assert s["t1"]["status"] == "not fully graded (2 of 3)" and s["t1"]["runs"] == 2
     assert s["t2"]["status"] == "not graded"
-    assert "not graded" in stability.report(runs)
+    text = stability.report(runs)
+    assert "not graded" in text and "0 stable-pass" in text and "1 not fully graded" in text
+
+
+def test_stability_one_graded_pass_among_ungraded_repeats_is_not_stable(tmp_path):
+    runs = [card(tmp_path, f"r{i}", {"t1": (True if i == 1 else None, 5), "t2": ((i != 2) if i < 3 else None, 4)})
+            for i in (1, 2, 3)]
+    s = stability.summarize([compare.load(r) for r in runs])
+    assert s["t1"]["status"] == "not fully graded (1 of 3)"
+    assert s["t2"]["status"] == "flaky"  # a pass and a fail already: flaky whatever the third said
+    assert "0/2 pass" in stability.report(runs)
+
+
+def test_judge_controls_cover_both_tasks_too():
+    stated = _stated_task()
+    both = schema.parse_task({
+        "id": "dev-y", "category": "software_dev", "prompt": "Answer in {workdir}.", "inputs": [],
+        "deliverables": [], "check": "both", "probe": ["assert True"], "must_establish": ["Says 42."],
+        "genuine_answer": "It is 42.", "wrong_answers": ["It is 41."], "max_minutes": 5}, schema.TASKS_FILE)
+    mech = schema.parse_task({
+        "id": "dev-z", "category": "software_dev", "prompt": "Answer in {workdir}.", "inputs": [],
+        "deliverables": [], "check": "mechanical", "probe": ["assert True"], "max_minutes": 5}, schema.TASKS_FILE)
+    by_id = {t.id: t for t in (stated, both, mech)}
+    assert [t.id for t in judge_controls.judged_tasks(by_id, ["dev-x", "dev-y", "dev-z"])] == ["dev-x", "dev-y"]
+
+
+def _versioned(tmp_path, name, results, version):
+    d = card(tmp_path, name, results)
+    if version:
+        folder = tmp_path / "graded" / "claude-code-x" / name
+        (folder / "eval-version.json").write_text(json.dumps({"framework": "0.6.0", "tasks": version}), encoding="utf-8")
+    return d
+
+
+def test_the_gate_fails_when_a_base_pass_is_ungraded_in_new_or_new_has_nothing_graded(tmp_path, capsys):
+    base = _versioned(tmp_path, "a", {"t1": (True, 5), "t2": (False, 2)}, "v1")
+    lost = _versioned(tmp_path, "b", {"t1": (None, 0), "t2": (False, 2)}, "v1")
+    assert compare.main([base, lost]) == 0
+    assert compare.main([base, lost, "--gate"]) == 1
+    assert "passed in BASE but not graded in NEW" in capsys.readouterr().err
+    nothing = _versioned(tmp_path, "c", {"t1": (None, 0), "t2": (None, 0)}, "v1")
+    assert compare.main([base, nothing, "--gate"]) == 1
+    assert "NEW has no graded task" in capsys.readouterr().err
+    fixed = _versioned(tmp_path, "d", {"t1": (True, 5), "t2": (None, 0)}, "v1")  # a BASE fail ungraded: no loss
+    assert compare.main([base, fixed, "--gate"]) == 0
+
+
+def test_the_gate_fails_on_different_task_fingerprints_unless_allowed(tmp_path, capsys):
+    base = _versioned(tmp_path, "a", {"t1": (True, 5)}, "v1")
+    new = _versioned(tmp_path, "b", {"t1": (True, 5)}, "v2")
+    assert any("different task versions" in w for w in compare.warnings(compare.load(base), compare.load(new)))
+    assert compare.main([base, new, "--gate"]) == 1
+    assert "task versions differ" in capsys.readouterr().err
+    assert compare.main([base, new, "--gate", "--allow-version-drift"]) == 0
+
+
+def test_compare_reads_the_version_from_the_graded_folder_and_warns_when_a_side_has_none(tmp_path):
+    base = compare.load(_versioned(tmp_path, "a", {"t1": (True, 5)}, "v1"))
+    assert base["tasks_version"] == "v1"  # eval-version.json beside the scorecard, no run dir
+    new = compare.load(_versioned(tmp_path, "b", {"t1": (True, 5)}, None))
+    w = compare.warnings(base, new)
+    assert any(x.startswith("NEW has no eval-version.json") for x in w)
+    assert not any(x.startswith("BASE has no") for x in w)

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from typing import Any, Dict, List, Optional, Tuple
 
 FUNCTIONS = ("SUM", "AVERAGE", "MIN", "MAX", "ROUND", "ABS", "COUNT", "COUNTA", "IF", "IFS", "IFERROR", "IFNA",
@@ -39,6 +40,8 @@ FUNCTIONS = ("SUM", "AVERAGE", "MIN", "MAX", "ROUND", "ABS", "COUNT", "COUNTA", 
              "SUMPRODUCT", "AND", "OR", "NOT", "ISNUMBER", "ISBLANK")
 #: SUBTOTAL's function numbers (101-111: the same, ignoring hidden rows, which a file read can't see).
 SUBTOTAL = {1: "AVERAGE", 2: "COUNT", 3: "COUNTA", 4: "MAX", 5: "MIN", 9: "SUM"}
+#: Functions that read a directly referenced cell as Excel reads a range: only its numbers count.
+REF_AS_RANGE = frozenset({"SUM", "AVERAGE", "MIN", "MAX", "COUNT"})
 
 
 class FormulaError(ValueError):
@@ -276,7 +279,8 @@ class _Parser:
             raise FormulaError(f"{self.where}: unexpected {self._peek()[1]!r}")
         if isinstance(v, _Range):
             raise FormulaError(f"{self.where}: a range is only valid inside a function")
-        return v
+        # A formula whose result is a blank cell (=A2 with A2 empty) shows 0 in Excel, not an empty cell.
+        return 0.0 if v is None else v
 
     def _compare(self) -> Any:
         v = self._concat()
@@ -438,13 +442,28 @@ class _Parser:
         args: List[Any] = []
         if not self._is_op(")"):
             while True:
-                args.append(self._arg())
+                index = len(args)
+                direct = self._direct_ref()
+                arg = self._arg()
+                if direct and (name in REF_AS_RANGE or (name == "SUBTOTAL" and index > 0)):
+                    # A cell named directly is read like a one-cell range: text, logicals and blanks
+                    # there are ignored (=SUM(A1) is 0 when A1 holds text), unlike a literal argument.
+                    arg = _Range([arg])
+                args.append(arg)
                 if self._is_op(","):
                     self._take()
                     continue
                 break
         self._close(name)
         return self._apply(name, args)
+
+    def _direct_ref(self) -> bool:
+        """The next argument is a single cell reference and nothing else (A1, not A1+0 or A1:B2)."""
+        tok = self._peek()
+        if tok is None or tok[0] != "ref" or ":" in tok[1][1]:
+            return False
+        after = self.toks[self.i + 1] if self.i + 1 < len(self.toks) else None
+        return after in (("op", ","), ("op", ")"))
 
     def _close(self, name: str) -> None:
         if self._take() != ("op", ")"):
@@ -497,8 +516,15 @@ class _Parser:
             if len(args) != 2:
                 raise FormulaError(f"{self.where}: ROUND needs two arguments")
             x, n = self._num(self._scalar(args[0])), int(self._num(self._scalar(args[1])))
-            q = 10 ** n
-            return float(int(abs(x) * q + 0.5)) / q * (1 if x >= 0 else -1)  # Excel rounds half away from zero
+            # Excel rounds half away from zero on the number as it shows it (15 significant digits), so
+            # ROUND(1.005, 2) is 1.01 although the binary double is 1.00499999...
+            d = Decimal(format(x, ".15g"))
+            try:
+                with localcontext() as ctx:  # room for any double's digits: ROUND(1E+30, 2) must not overflow
+                    ctx.prec = 400
+                    return float(d.quantize(Decimal(1).scaleb(-n), rounding=ROUND_HALF_UP))
+            except InvalidOperation as exc:
+                raise FormulaError(f"{self.where}: ROUND({x}, {n}) is out of range") from exc
         if name in ("AND", "OR"):
             vals = [self._bool(v) for a in args for v in (a.values if isinstance(a, _Range) else [a]) if v is not None]
             return all(vals) if name == "AND" else any(vals)

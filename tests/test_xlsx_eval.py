@@ -219,3 +219,43 @@ def test_multi_criteria_conditional_and_error_functions(tmp_path):
     assert wb.value("Data", 13, 5) == -1  # no match: #DIV/0! in Excel, caught by IFERROR
     with pytest.raises(xlsx_eval.FormulaError):
         wb.value("Data", 12, 5)
+
+
+@pytest.mark.parametrize("formula, expected", [
+    ("=SUM(B1)", 0.0),            # a cell named directly holding text is ignored, as in a range
+    ("=SUM(B1, C1, D1, 4)", 4.0),  # text, TRUE and a blank, all named directly: ignored
+    ("=MAX(B1, C1, -2)", -2.0),
+    ("=MIN(D1, 3)", 3.0),
+    ("=AVERAGE(B1, C1, D1, 4, 6)", 5.0),
+    ("=SUBTOTAL(9, B1, 7)", 7.0),
+    ("=SUM(TRUE, 1)", 2.0),        # a literal logical still counts
+    ("=D1", 0.0),                  # a formula showing a blank cell shows 0
+    ("=SUM(B1 & \"\", 1)", None),  # a computed text argument is still #VALUE!
+])
+def test_a_directly_referenced_cell_reads_like_a_one_cell_range(tmp_path, formula, expected):
+    def build(wb, ws):
+        ws["A1"] = formula
+        ws["B1"], ws["C1"] = "n/a", True
+
+    wb = xlsx_eval.Workbook(book(tmp_path, build))
+    if expected is None:
+        with pytest.raises(xlsx_eval.ExcelError):
+            wb.value("Data", 1, 1)
+    else:
+        assert wb.value("Data", 1, 1) == expected
+
+
+@pytest.mark.parametrize("formula, expected", [
+    ("=ROUND(1.005, 2)", 1.01),     # Excel shows 1.01; the double 1.00499999... must not round down
+    ("=ROUND(2.675, 2)", 2.68),
+    ("=ROUND(-1.005, 2)", -1.01),
+    ("=ROUND(1234.5, -2)", 1200.0),
+    ("=ROUND(0.285, 2)", 0.29),
+    ("=ROUND(1.0049, 2)", 1.0),
+    ("=ROUND(1E+30, 2)", 1e30),     # a huge value must not overflow the decimal context
+])
+def test_round_works_on_the_decimal_excel_shows(tmp_path, formula, expected):
+    def build(wb, ws):
+        ws["A1"] = formula
+
+    assert xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1) == expected
