@@ -27,6 +27,21 @@ safe_id() {
   }
 }
 
+# What the app showed, for kwengine record, from optional environment variables (rec_thread.sh, record.sh):
+# KW_APP_VERSION, KW_MODE, KW_REASONING, KW_SPEED, KW_QUEUE_SECONDS, KW_LOCAL_TOKENS, KW_ENGINE_BUILD, KW_OUTCOME.
+# Fills the array RUN_INFO; e.g. KW_MODE=local KW_QUEUE_SECONDS=610 ./rec_thread.sh ...
+run_info_args() {
+  RUN_INFO=()
+  local pair var flag
+  [[ "${KW_QUEUE_SECONDS:-0}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "ERROR: KW_QUEUE_SECONDS '$KW_QUEUE_SECONDS' is not a number" >&2; exit 2; }
+  for pair in APP_VERSION:app-version MODE:mode REASONING:reasoning SPEED:speed QUEUE_SECONDS:queue-seconds \
+              LOCAL_TOKENS:local-tokens ENGINE_BUILD:engine-build OUTCOME:outcome; do
+    var="KW_${pair%%:*}"; flag="--${pair#*:}"
+    [ -n "${!var:-}" ] && RUN_INFO+=("$flag" "${!var}")
+  done
+  return 0
+}
+
 winpath() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi
 }
