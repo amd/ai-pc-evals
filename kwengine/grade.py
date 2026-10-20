@@ -493,10 +493,13 @@ def blinder(run_dir: Path, workdir: Path, names: Sequence[str],
     as ``local`` is also ordinary text.
     """
     def path_pattern(parts: Sequence[str]) -> str:
-        return r"[\\/]+".join(re.escape(part) for part in parts if part)
+        return r"[\\/]+".join(re.escape(part) for part in parts)
 
     def split(p: str) -> List[str]:
-        return [part for part in re.split(r"[\\/]+", p) if part]
+        """A path's parts; an absolute POSIX or UNC path keeps its root as an empty first part, so the pattern
+        takes the leading separator too."""
+        parts = re.split(r"[\\/]+", p)
+        return [parts[0]] + [part for part in parts[1:] if part]
 
     folders = [(split(str(Path(workdir).resolve())), split(str(Path(run_dir).resolve())))]
     if prepared_as and len(split(prepared_as)) > 1:

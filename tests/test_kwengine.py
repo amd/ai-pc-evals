@@ -1548,3 +1548,10 @@ def test_the_judge_reads_no_path_from_the_machine_the_run_was_prepared_on(tmp_pa
     blind = grade.blinder(tmp_path / "copy", tmp_path / "copy" / "pc-10", ["perplexity-local"], prepared_as=there)
     out = blind(f"Saved {there}{sep}deck.pptx; inputs in {there.rsplit(sep, 1)[0]}{sep}.baseline")
     assert out == f"Saved <task folder>{sep}deck.pptx; inputs in <run folder>{sep}.baseline"
+
+
+def test_blinding_takes_a_posix_paths_leading_slash_too(tmp_path):
+    there = "/home/tester/kw-eval/runs/perplexity-local/portable-1/pc-10"
+    blind = grade.blinder(tmp_path / "copy", tmp_path / "copy" / "pc-10", [], prepared_as=there)
+    assert blind(f"Saved {there}/deck.pptx and /home/tester/kw-eval/runs/perplexity-local/portable-1/.records") == \
+        "Saved <task folder>/deck.pptx and <run folder>/.records"

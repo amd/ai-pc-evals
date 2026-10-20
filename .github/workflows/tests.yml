@@ -14,7 +14,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-latest]
-        include:  # the oldest Python the docs allow, on the platform the evals run on
+        python: ["3.13"]
+        include:  # and the oldest Python the docs allow, on the platform the evals run on
           - os: windows-latest
             python: "3.12"
     runs-on: ${{ matrix.os }}
@@ -23,7 +24,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python || '3.13' }}
+          python-version: ${{ matrix.python }}
       - run: python -m pip install -r requirements-dev.txt
       - name: Compile every script
         shell: bash
