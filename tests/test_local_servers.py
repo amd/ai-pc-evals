@@ -94,7 +94,7 @@ def test_engine_info_without_metrics_or_without_a_server(monkeypatch, capsys):
     _serve(monkeypatch, {"/props": json.dumps(PROPS)})
     assert engine_info.info(1)["metrics"] is None
     monkeypatch.setattr(engine_info.local_servers, "list_servers", lambda: [
-        {"kind": "ollama", "port": 11434}, {"kind": "llama-server", "port": 51234}])
+        {"kind": "ollama", "port": 11434}, {"kind": "llama-server", "port": 51234, "path": "C:/Perplexity/engine/llama-server.exe"}])
     assert engine_info.main(["--build"]) == 0 and capsys.readouterr().out.strip() == "b10825-9e0e220"
     _serve(monkeypatch, {})
     assert engine_info.info(1) == {"port": 1, "error": "no /props on 127.0.0.1:1"}
@@ -121,3 +121,21 @@ def test_engine_info_has_a_cli(args):
     with pytest.raises(SystemExit) as exc:
         engine_info.main(args)
     assert exc.value.code == 0
+
+
+def test_the_engine_build_is_perplexitys_never_another_apps(monkeypatch):
+    import engine_info
+
+    def server(port, path):
+        return {"pid": port, "kind": "llama-server", "name": "llama-server", "model": "", "port": port, "path": path}
+    builds = {8001: "b1-lemonade", 9100: "b10825-pplx"}
+    monkeypatch.setattr(engine_info, "info", lambda p: {"build_info": builds.get(p)})
+    lemonade = server(8001, "C:/Users/me/AppData/Local/lemonade_server/bin/llama-server.exe")
+    pplx = server(9100, "C:/Users/me/AppData/Local/Perplexity/engine/2026.09.28/llama-server.exe")
+    monkeypatch.setattr(engine_info.local_servers, "list_servers", lambda: [lemonade, pplx])
+    assert engine_info.running_build() == "b10825-pplx"
+    monkeypatch.setattr(engine_info.local_servers, "list_servers", lambda: [lemonade, server(8002, "D:/x/llama-server")])
+    assert engine_info.running_build() is None  # several, none of them Perplexity's: record nothing
+    monkeypatch.setattr(engine_info.local_servers, "list_servers", lambda: [lemonade])
+    assert engine_info.running_build() is None  # the only engine running is not Perplexity's
+    assert engine_info.running_build(port=8001) == "b1-lemonade"  # unless asked for by port

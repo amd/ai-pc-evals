@@ -115,3 +115,13 @@ def test_main_reports_error_without_traceback(monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"nothing here\n"), encoding="utf-8"))
     assert ta.main([]) == 1
     assert "ERROR: found no agent time" in capsys.readouterr().err
+
+
+def test_an_answer_that_repeats_the_prompt_or_holds_a_time_line_is_kept_whole():
+    answer = ("Done.\n\nSave it as summary.docx in the task folder.\n\nTiming per step:\n\n45s\n\n"
+              "That is all.")
+    cloud = PROMPT + "\n\n" + answer + "\n\nSources\n\n1 report.pdf\n"
+    assert ta.extract(cloud, PROMPT) == answer
+    local = PROMPT + "\n\nLocal agent: qwen3-32b\n\n2m 51s\n\n" + answer + "\n"
+    assert ta.extract(local) == answer
+    assert ta.extract(local, PROMPT) == answer

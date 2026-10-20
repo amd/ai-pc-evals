@@ -12,12 +12,14 @@ A copied thread is the prompt, then the agent's turn, then the app's chrome:
 
 The rule, applied to the last turn in the thread:
 
-1. Start: the answer begins after the last *anchor* line outside a Sources/Usage section.
-   Anchors are, in order of where they appear: the last line of the prompt (when
-   --prompt-file gives it; cloud copies need it), an agent header ('Local agent: ...',
-   'Cloud agent: ...'), and the agent's time ('45s', '2m 51s', '1h 2m 3s', optionally
-   after 'Finished'/'Completed'/'Worked for'). Agent headers, time lines and step counts
-   ('12 steps', 'Completed 12 steps') right after the anchor are skipped too.
+1. Start: the last turn begins at its agent header ('Local agent: ...', 'Cloud agent: ...');
+   with none, at the end of the last place the whole prompt appears, every non-blank line in
+   order (when --prompt-file gives it; cloud copies need it); with neither, at the first
+   agent time ('45s', '2m 51s', '1h 2m 3s', optionally after 'Finished'/'Completed'/'Worked
+   for') outside a Sources/Usage section. Agent headers, time lines and step counts ('12
+   steps', 'Completed 12 steps') right after it are skipped, and the answer begins there. A
+   line inside the answer (the prompt's last line repeated, a bare '45s') never moves the
+   start.
 2. End: the first standalone 'Sources' or 'Usage' line after the start, or the end of the
    text when there is none (short local threads). Trailing app buttons (Share, Export,
    Rewrite, Copy) and time or step lines are dropped.
@@ -53,17 +55,28 @@ def extract(text: str, prompt: str | None = None) -> str:
     prompt_lines = [ln.strip() for ln in (prompt or "").replace("\r\n", "\n").split("\n") if ln.strip()]
     prompt_last = prompt_lines[-1] if prompt_lines else None
 
-    # Anchors outside Sources/Usage sections: a section runs until the next prompt or agent header.
+    # Where the last turn starts: its agent header, else the end of the whole prompt (every non-blank line of it,
+    # in order), else the first time line outside a Sources/Usage section. Never a line inside the answer: an
+    # answer may repeat the prompt's last line or hold a line such as "45s".
     anchor = None
-    in_section = False
     for i, s in enumerate(stripped):
-        if SECTION_LINE.match(s):
-            in_section = True
-        elif (prompt_last and s == prompt_last) or AGENT_LINE.match(s):
-            in_section = False
+        if AGENT_LINE.match(s):
             anchor = i
-        elif not in_section and TIME_LINE.match(s):
-            anchor = i
+    if anchor is None and prompt_lines:
+        filled = [i for i, s in enumerate(stripped) if s]
+        n = len(prompt_lines)
+        for k in range(len(filled) - n, -1, -1):
+            if [stripped[i] for i in filled[k:k + n]] == prompt_lines:
+                anchor = filled[k + n - 1]
+                break
+    if anchor is None:
+        in_section = False
+        for i, s in enumerate(stripped):
+            if SECTION_LINE.match(s):
+                in_section = True
+            elif not in_section and TIME_LINE.match(s):
+                anchor = i
+                break
     if anchor is None:
         hint = "" if prompt_last else "; for a cloud thread pass --prompt-file"
         raise NoAnswer("found no agent time, agent line or prompt in the copied thread" + hint)

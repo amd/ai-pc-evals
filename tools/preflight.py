@@ -27,10 +27,11 @@ Standard library, plus psutil when it is installed (tools/local_servers.py).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
-import hashlib
 import tempfile
 import time
 import zipfile
@@ -132,18 +133,32 @@ def release_package(path: Path) -> bool:
     name = path.name.lower()
     if not name.startswith("ai-pc-evals-"):
         return False
-    if name.endswith(".zip.sha256"):
-        return True
+    if name.endswith(".zip.sha256"):  # one checksum line naming a release zip, nothing else
+        try:
+            text = path.read_text(encoding="utf-8") if path.stat().st_size < 200 else ""
+        except (OSError, UnicodeDecodeError):
+            return False
+        return bool(re.fullmatch(r"[0-9a-f]{64}  ai-pc-evals-[\w.+-]+\.zip\n?", text))
     if not name.endswith(".zip"):
         return False
     try:
         with zipfile.ZipFile(path) as z:
-            names = z.namelist()
-    except (OSError, zipfile.BadZipFile):
+            names = [n for n in z.namelist() if not n.endswith("/")]
+            tops = {n.split("/", 1)[0] for n in names}
+            if len(tops) != 1:
+                return False
+            top = tops.pop()
+            listed = {}
+            for line in z.read(f"{top}/MANIFEST.sha256").decode("utf-8").splitlines():
+                digest, _, rel = line.partition("  ")
+                listed[f"{top}/{rel}"] = digest
+            # Every file is one the release's own manifest lists, unchanged: a key copy slipped in fails this.
+            stamps = {f"{top}/MANIFEST.sha256", f"{top}/BUILD_INFO.json"}
+            if f"{top}/BUILD_INFO.json" not in names or set(names) - stamps != set(listed):
+                return False
+            return all(hashlib.sha256(z.read(n)).hexdigest() == listed[n] for n in listed)
+    except (OSError, KeyError, UnicodeDecodeError, zipfile.BadZipFile):
         return False
-    # A real release has its manifest and build stamp at the top of its one folder.
-    return any(n.count("/") == 1 and n.endswith("/MANIFEST.sha256") for n in names) and \
-        any(n.count("/") == 1 and n.endswith("/BUILD_INFO.json") for n in names)
 
 
 def pplx_kit_dirs(home: Path, env: dict) -> List[Path]:

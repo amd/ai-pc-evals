@@ -78,9 +78,16 @@ def ports() -> List[int]:
     return [s["port"] for s in local_servers.list_servers() if s["kind"] == "llama-server" and s.get("port")]
 
 
-def running_build(port: Optional[int] = None) -> Optional[str]:
-    """The build of the server on *port*, or of the first running llama-server that answers."""
-    for p in [port] if port else ports():
+def running_build(port: Optional[int] = None, owner: str = "perplexity") -> Optional[str]:
+    """The build of the server on *port*; with none, of the llama-server *owner*'s app runs (its executable's
+    path names it). Nothing when no such server runs: another app's engine (Lemonade, GAIA) must never be
+    recorded as the agent's."""
+    if port:
+        candidates = [port]
+    else:
+        candidates = [s["port"] for s in local_servers.list_servers()
+                      if s["kind"] == "llama-server" and s.get("port") and owner in (s.get("path") or "").lower()]
+    for p in candidates:
         build = info(p).get("build_info")
         if build:
             return str(build)
