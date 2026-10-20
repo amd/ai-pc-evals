@@ -259,3 +259,184 @@ def test_round_works_on_the_decimal_excel_shows(tmp_path, formula, expected):
         ws["A1"] = formula
 
     assert xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1) == expected
+
+
+@pytest.mark.parametrize("formula, expected", [
+    ("=DATE(2026, 10, 19)", 46314.0),
+    ("=DATE(2026, 14, 1)", 46419.0),                  # month 14 rolls into February 2027
+    ("=DATE(2027, 2, 1)", 46419.0),
+    ("=DATE(2026, 1, 0)", 46022.0),                   # day 0 is the last day of the month before
+    ("=DATE(2026, 0, 1)", 45992.0),                   # month 0 is December of the year before
+    ("=DATE(26, 1, 1)", 9498.0),                      # a year under 1900 counts from 1900: 1926
+    ("=DATE(1900, 1, 1)", 1.0),
+    ("=DATE(1900, 2, 28)", 59.0),
+    ("=DATE(1900, 2, 29)", 60.0),                     # the day Excel invented, kept for Lotus 1-2-3
+    ("=DATE(1900, 3, 1)", 61.0),
+    ("=YEAR(60) & \"-\" & MONTH(60) & \"-\" & DAY(60)", "1900-2-29"),
+    ("=DAY(59) & \"/\" & DAY(61)", "28/1"),
+    ("=YEAR(DATE(2026, 10, 19)) + MONTH(46314) + DAY(46314.75)", 2026 + 10 + 19.0),
+    ("=WEEKDAY(DATE(2026, 10, 19))", 2.0),            # a Monday; type 1: Sunday is 1
+    ("=WEEKDAY(DATE(2026, 10, 18), 1)", 1.0),
+    ("=WEEKDAY(DATE(2026, 10, 19), 2)", 1.0),         # type 2: Monday is 1
+    ("=WEEKDAY(DATE(2026, 10, 18), 2)", 7.0),
+    ("=WEEKDAY(DATE(2026, 10, 19), 3)", 0.0),         # type 3: Monday is 0
+    ("=WEEKDAY(DATE(2026, 10, 18), 3)", 6.0),
+    ("=WEEKDAY(DATE(2026, 10, 21), 13)", 1.0),        # type 13: Wednesday is 1
+    ("=WEEKDAY(1)", 1.0),                             # Excel's calendar makes 1900-01-01 a Sunday
+    ("=WEEKDAY(61)", 5.0),                            # 1900-03-01 was a Thursday
+    ("=EDATE(DATE(2026, 1, 31), 1)", 46081.0),        # 31 January + 1 month: 28 February
+    ("=EDATE(DATE(2026, 10, 19), -12)", 45949.0),
+    ("=EOMONTH(DATE(2026, 10, 19), 0)", 46326.0),
+    ("=EOMONTH(DATE(2026, 3, 15), -1)", 46081.0),     # negative months go back
+    ("=EOMONTH(DATE(2026, 3, 15), -15)", 45657.0),    # into the year before last: 2024-12-31
+    ("=EOMONTH(DATE(2024, 1, 10), 1)", 45351.0),      # 2024-02-29
+    ("=DAYS(DATE(2026, 12, 25), DATE(2026, 10, 19))", 67.0),
+    ("=DAYS(DATE(2026, 10, 19), DATE(2026, 12, 25))", -67.0),
+    ('=DATEDIF(DATE(2024, 1, 31), DATE(2026, 2, 28), "M")', 24.0),  # whole months only
+    ('=DATEDIF(DATE(2024, 1, 31), DATE(2026, 2, 28), "Y")', 2.0),
+    ('=DATEDIF(DATE(2024, 3, 1), DATE(2026, 2, 28), "Y")', 1.0),
+    ('=DATEDIF(DATE(2024, 1, 31), DATE(2026, 2, 28), "D")', 759.0),
+    ('=DATEDIF(DATE(2024, 1, 31), DATE(2026, 2, 28), "ym")', 0.0),
+    ("=NETWORKDAYS(DATE(2026, 10, 1), DATE(2026, 10, 31))", 22.0),
+    ("=NETWORKDAYS(DATE(2026, 10, 31), DATE(2026, 10, 1))", -22.0),  # reversed dates count negative
+    ("=NETWORKDAYS(DATE(2026, 10, 17), DATE(2026, 10, 18))", 0.0),   # a weekend
+    ("=NETWORKDAYS(DATE(2026, 10, 1), DATE(2026, 10, 31), H1:H3)", 20.0),  # a Saturday holiday doesn't count
+    ("=NETWORKDAYS(DATE(2026, 10, 31), DATE(2026, 10, 1), H1:H3)", -20.0),
+    ("=NETWORKDAYS(DATE(2026, 10, 1), DATE(2026, 10, 31), H1)", 21.0),
+    ("=WORKDAY(DATE(2026, 10, 16), 1)", 46314.0),     # Friday + 1 working day: Monday
+    ("=WORKDAY(DATE(2026, 10, 19), -1)", 46311.0),    # and back
+    ("=WORKDAY(DATE(2026, 10, 17), 0)", 46312.0),     # 0 days: the start, even on a Saturday
+    ("=WORKDAY(DATE(2026, 10, 9), 5, H1:H3)", 46315.0),  # skips the holidays on 12 and 14 October: the 20th
+    ("=WORKDAY(DATE(2026, 10, 9), 5, H1:H4)", 46315.0),  # a blank in the holidays is ignored
+    ("=WORKDAY(DATE(2026, 10, 9), 5)", 46311.0),          # without holidays: Friday the 16th
+])
+def test_date_functions_compute_as_excel(tmp_path, formula, expected):
+    import datetime as dt
+
+    def build(wb, ws):
+        ws["A1"] = formula
+        ws["H1"], ws["H2"], ws["H3"] = dt.date(2026, 10, 12), dt.datetime(2026, 10, 14), dt.date(2026, 10, 24)
+
+    assert xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1) == expected
+
+
+@pytest.mark.parametrize("formula, message", [
+    ("=DATE(10000, 1, 1)", "#NUM!"),
+    ("=DATE(1900, 1, -1)", "#NUM!"),
+    ("=YEAR(-1)", "#NUM!"),
+    ("=WEEKDAY(46314, 4)", "return type 4"),
+    ('=DATEDIF(DATE(2026, 2, 1), DATE(2026, 1, 1), "D")', "start is after its end"),
+    ('=DATEDIF(DATE(2026, 1, 1), DATE(2026, 2, 1), "Q")', "DATEDIF unit"),
+    ('=YEAR("soon")', "arithmetic on non-number"),
+    ("=EOMONTH(DATE(1900, 1, 15), -1)", "#NUM!"),
+])
+def test_date_errors_are_excel_errors(tmp_path, formula, message):
+    def build(wb, ws):
+        ws["A1"] = formula
+
+    with pytest.raises(xlsx_eval.ExcelError, match=message):
+        xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1)
+
+
+def test_today_and_now_use_the_clock_without_a_cached_value(tmp_path):
+    import datetime as dt
+
+    def build(wb, ws):
+        ws["A1"], ws["A2"] = "=TODAY()", "=NOW()-TODAY()"
+
+    before = dt.date.today()
+    wb = xlsx_eval.Workbook(book(tmp_path, build))
+    today = wb.value("Data", 1, 1)
+    assert xlsx_eval.excel_serial(before) <= today <= xlsx_eval.excel_serial(dt.date.today())
+    assert 0 <= wb.value("Data", 2, 1) < 1  # the time of day
+
+
+def test_today_prefers_the_value_excel_cached(tmp_path):
+    # An Excel-saved file carries the result from when it was saved; that is what the reader saw.
+    import zipfile
+
+    def build(wb, ws):
+        ws["A1"] = "=TODAY()"
+
+    src = book(tmp_path, build)
+    cached = tmp_path / "cached.xlsx"
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(cached, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = data.replace(b"<f>TODAY()</f><v></v>", b"<f>TODAY()</f><v>46000</v>")
+                assert b"<v>46000</v>" in data
+            zout.writestr(item, data)
+    assert xlsx_eval.Workbook(cached).value("Data", 1, 1) == 46000
+
+
+def test_date_cells_and_date_formulas_compute_alike(tmp_path):
+    import datetime as dt
+
+    def build(wb, ws):
+        ws.title = "Action Tracker"
+        ws.append(["action", "due"])
+        ws.append(["ship", "x"])
+        ws["M1"] = "due"
+        ws["M2"] = dt.datetime(2026, 10, 19)  # openpyxl writes it date-formatted; reads it back as a datetime
+        ws["M3"] = dt.date(2026, 12, 1)
+        ws["N2"] = "=M2-DATE(2026,1,1)"
+        ws["N3"] = "=M2=DATE(2026,10,19)"
+        ws["N4"] = '=IF(M2<DATE(2026,11,1),"due soon","later")'
+        ws["N5"] = '=COUNTIF(M2:M3,"<"&DATE(2026,11,1))'
+        ws["N6"] = '="due "&M2'
+        ws["N7"] = "=ISNUMBER(M2)"
+        ws["N8"] = "=DATE(2026,10,19)"
+        ws["N8"].number_format = "yyyy-mm-dd"  # a date-formatted result shows as a date, as Excel saves it
+        ws["N9"] = "=N8=M2"
+        ws["N10"] = "=WORKDAY(M2,3)"
+        ws["N10"].number_format = "d-mmm-yy"
+        ws["N11"] = "=NETWORKDAYS(M2,M3)"
+        ws["N12"] = '=COUNTIF(M2:M3,">="&TODAY())'
+
+    wb = xlsx_eval.Workbook(book(tmp_path, build))
+    sheet = "Action Tracker"
+    assert wb.value(sheet, 2, 13) == dt.datetime(2026, 10, 19)
+    assert wb.value(sheet, 2, 14) == 291.0  # days, a number
+    assert wb.value(sheet, 3, 14) is True
+    assert wb.value(sheet, 4, 14) == "due soon"
+    assert wb.value(sheet, 5, 14) == 1.0
+    assert wb.value(sheet, 6, 14) == "due 46314"  # Excel joins a date as its serial
+    assert wb.value(sheet, 7, 14) is True
+    assert wb.value(sheet, 8, 14) == dt.datetime(2026, 10, 19)
+    assert wb.value(sheet, 9, 14) is True
+    assert wb.value(sheet, 10, 14) == dt.datetime(2026, 10, 22)
+    assert wb.value(sheet, 11, 14) == 32.0  # 19 October to 1 December, both counted
+    today = dt.date.today()
+    assert wb.value(sheet, 12, 14) == sum(1 for d in (dt.date(2026, 10, 19), dt.date(2026, 12, 1)) if d >= today)
+
+
+def test_excel_serial_keeps_the_1900_leap_bug():
+    import datetime as dt
+
+    assert xlsx_eval.excel_serial(dt.date(1900, 1, 1)) == 1.0
+    assert xlsx_eval.excel_serial(dt.date(1900, 2, 28)) == 59.0
+    assert xlsx_eval.excel_serial(dt.date(1900, 3, 1)) == 61.0
+    assert xlsx_eval.excel_serial(dt.datetime(1900, 2, 28, 12)) == 59.5
+    assert xlsx_eval.excel_serial(dt.time(18)) == 0.75
+    assert xlsx_eval.excel_serial(dt.timedelta(hours=36)) == 1.5
+
+
+@pytest.mark.parametrize("formula", ["=VLOOKUP(1, A2:B3, 2)", "=XLOOKUP(1, A2:A3, B2:B3)", "=SUBTOTAL(7, A2:A3)",
+                                     '=DATEDIF(DATE(2026, 1, 1), DATE(2026, 2, 1), "MD")'])
+def test_an_unknown_function_raises_unsupported_function(tmp_path, formula):
+    def build(wb, ws):
+        ws["A1"] = formula
+
+    with pytest.raises(xlsx_eval.UnsupportedFunction, match="unsupported"):
+        xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1)
+    assert issubclass(xlsx_eval.UnsupportedFunction, xlsx_eval.FormulaError)
+    assert not issubclass(xlsx_eval.UnsupportedFunction, xlsx_eval.ExcelError)  # IFERROR must not hide it
+
+
+def test_iferror_does_not_hide_an_unsupported_function(tmp_path):
+    def build(wb, ws):
+        ws["A1"] = '=IFERROR(VLOOKUP(1, A2:B3, 2), "none")'
+
+    with pytest.raises(xlsx_eval.UnsupportedFunction):
+        xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1)
