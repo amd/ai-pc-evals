@@ -1,5 +1,7 @@
 #!/bin/bash
 # usage: rec_thread.sh <leg> <batch> <task> "<app time>" <model> [credits]  — record from a copied thread (clipboard)
+# Optional: KW_MODE, KW_REASONING, KW_SPEED, KW_APP_VERSION, KW_QUEUE_SECONDS, KW_LOCAL_TOKENS, KW_ENGINE_BUILD and
+# KW_OUTCOME (stalled-asked-human, did-not-run) are passed to kwengine record (see _env.sh).
 # Cloud runs: pass the credits the app showed. The harness is perplexity-cloud for the cloud leg,
 # perplexity-lemonade for the lemonade leg, perplexity-local otherwise.
 set -euo pipefail
@@ -14,8 +16,11 @@ R="$KW_HOME/runs/$L/$B"; A="$KW_HOME/answers/$L-$T.md"
 mkdir -p "$KW_HOME/answers"
 powershell -NoProfile -Command "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw" | "$PY" "$HERE/thread_answer.py" > "$A"
 W=$(deliverable_seconds "$R" "$T")
+run_info_args
+# A wait behind another session is not the agent's time: it is recorded apart, as --queue-seconds.
+Q=${KW_QUEUE_SECONDS:-0}; Q=${Q%.*}; W=$(( W > Q ? W - Q : 0 ))
 kw record "$(winpath "$R")" "$T" \
   --answer-file "$(winpath "$A")" --wall-seconds "$W" --credits "$C" --harness "$H" --model "$M" \
-  --notes "app: Finished $APP" --force >/dev/null
+  --notes "app: Finished $APP" "${RUN_INFO[@]}" --force >/dev/null
 echo "recorded $T: files at +${W}s, app $APP, answer $(wc -c < "$A") bytes"
 head -c 300 "$A"

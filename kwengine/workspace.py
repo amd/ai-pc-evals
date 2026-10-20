@@ -320,6 +320,57 @@ def _non_negative(value: Any, name: str, kind: type) -> None:
         raise ValueError(f"{name} must be a whole number, got {value!r}")
 
 
+#: How a run ended (``run_info.outcome``), and the failure each one other than "finished" records.
+OUTCOMES = {
+    "finished": None,
+    "stalled-asked-human": ("stalled: the agent stopped to ask a human", "failed"),
+    "did-not-run": ("the tester reported that the agent did not run", "unavailable"),
+}
+#: What a person saw in an app-driven run (``kwengine record --app-version ...``), by type. All optional.
+RUN_INFO_FIELDS: Dict[str, type] = {
+    "app_version": str,  # the app's own version, e.g. "26.10.2 (117519)"
+    "mode": str,  # the model picker as set: standard, custom: Opus 5.5, local, ...
+    "reasoning": str,  # the picker's reasoning level, when it has one
+    "speed": str,
+    "queue_seconds": float,  # waiting behind another session: not part of wall_seconds
+    "local_tokens": int,  # the app's own "Local tokens used" figure
+    "engine_build": str,  # the running local engine's build (tools/perplexity/engine_info.py)
+    "outcome": str,  # one of OUTCOMES
+}
+
+
+def check_run_info(info: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """*info* with its empty fields dropped, or ValueError naming the first bad one."""
+    clean: Dict[str, Any] = {}
+    for name, value in (info or {}).items():
+        if name not in RUN_INFO_FIELDS:
+            raise ValueError(f"run_info has no field {name!r}; it takes {', '.join(RUN_INFO_FIELDS)}")
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        kind = RUN_INFO_FIELDS[name]
+        if kind is str:
+            if not isinstance(value, str):
+                raise ValueError(f"run_info {name} must be text, got {value!r}")
+            value = value.strip()
+        else:
+            _non_negative(value, name, kind)
+            value = round(float(value), 1) if kind is float else value
+        if name == "outcome" and value not in OUTCOMES:
+            raise ValueError(f"outcome must be one of {', '.join(OUTCOMES)}, got {value!r}")
+        clean[name] = value
+    return clean
+
+
+def run_info_line(info: Optional[Mapping[str, Any]]) -> str:
+    """One line for a report: ``mode local · app 26.10.2 · queued 600s ...``; empty when nothing was recorded."""
+    info = info or {}
+    labels = (("outcome", "outcome {}"), ("mode", "mode {}"), ("reasoning", "reasoning {}"), ("speed", "speed {}"),
+              ("app_version", "app {}"), ("engine_build", "engine {}"), ("queue_seconds", "queued {:g}s"),
+              ("local_tokens", "{} local tokens"))
+    return " · ".join(fmt.format(info[k]) for k, fmt in labels
+                      if info.get(k) not in (None, "") and not (k == "outcome" and info[k] == "finished"))
+
+
 def record(
     run_dir: Path,
     task_id: str,
@@ -332,11 +383,15 @@ def record(
     steps: Optional[int] = None,
     notes: str = "",
     reported_cost_usd: Optional[float] = None,
+    run_info: Optional[Mapping[str, Any]] = None,
     extra: Optional[Mapping[str, Any]] = None,
     force: bool = False,
     scrubber: Optional[Scrubber] = None,
 ) -> Path:
-    """Write ``.records/<task>/result.json``: what one agent run produced, and its cost."""
+    """Write ``.records/<task>/result.json``: what one agent run produced, and its cost.
+
+    *run_info* holds what a person saw in the app (``RUN_INFO_FIELDS``). An outcome other than
+    "finished" records the run as failed with that reason, unless the result already names an error."""
     run = read_run(run_dir)
     if task_id not in run["tasks"]:
         raise ValueError(
@@ -356,6 +411,7 @@ def record(
         _non_negative(steps, "steps", int)
     if reported_cost_usd is not None:
         _non_negative(reported_cost_usd, "reported_cost_usd", float)
+    info = check_run_info(run_info)
     path = record_dir(run_dir, task_id) / RESULT_FILE
     if path.exists() and not force:
         raise FileExistsError(
@@ -373,11 +429,16 @@ def record(
         "notes": notes,
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         **({} if reported_cost_usd is None else {"reported_cost_usd": reported_cost_usd}),
+        **({"run_info": info} if info else {}),
     }
-    clash = sorted(set(extra or {}) & set(result))
+    clash = sorted(set(extra or {}) & (set(result) | {"run_info"}))
     if clash:
         raise ValueError(f"extra fields {clash} would overwrite the recorded result's own")
     result.update(extra or {})
+    failure = OUTCOMES.get(info.get("outcome", "finished"))
+    if failure and not result.get("error"):
+        # The grader fails a result that names an error, and shows the error as the reason.
+        result["error"], result["error_kind"] = failure
     (scrubber or Scrubber.from_environment()).write_json(path, result, indent=2)
     return path
 
