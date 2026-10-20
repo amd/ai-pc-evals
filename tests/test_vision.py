@@ -5,6 +5,8 @@ import json
 import os
 import random
 import sys
+import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -57,6 +59,7 @@ def test_text_saved_as_docx_is_rejected_before_office_sees_it(tmp_path):
 
 def test_backend_choice(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(render, "_office_missing", False)
     assert render.pick_backend("auto") == "office"
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(render, "soffice", lambda: None)
@@ -65,6 +68,82 @@ def test_backend_choice(monkeypatch):
     monkeypatch.setattr(render, "soffice", lambda: "/usr/bin/soffice")
     assert render.pick_backend("auto") == "libreoffice"
     assert render.pick_backend("office") == "office"
+
+
+COM_NOT_REGISTERED = ("New-Object : Retrieving the COM class factory for component with CLSID {...} failed due to "
+                      "the following error: 80040154 Class not registered (Exception from HRESULT: 0x80040154 "
+                      "(REGDB_E_CLASSNOTREG)).")
+
+
+def _fake_converters(monkeypatch, office_stderr, soffice_path):
+    """subprocess.run stand-in: PowerShell fails with *office_stderr* (or succeeds), soffice writes the PDF."""
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd[0])
+        if cmd[0] == "powershell":
+            if office_stderr:
+                return SimpleNamespace(returncode=1, stderr=office_stderr, stdout="")
+            Path(cmd[-1]).write_bytes(b"%PDF")
+        else:
+            outdir = Path(cmd[cmd.index("--outdir") + 1])
+            (outdir / (Path(cmd[-1]).stem + ".pdf")).write_bytes(b"%PDF")
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(render, "_office_missing", False)
+    monkeypatch.setattr(render, "soffice", lambda: soffice_path)
+    monkeypatch.setattr(render.subprocess, "run", run)
+    return calls
+
+
+def _deck(tmp_path):
+    src = tmp_path / "deck.pptx"
+    with zipfile.ZipFile(src, "w") as z:
+        z.writestr("x", "y")
+    work = tmp_path / "work"
+    work.mkdir()
+    return src, work
+
+
+def test_auto_falls_back_to_libreoffice_when_office_is_not_registered(tmp_path, monkeypatch, capsys):
+    calls = _fake_converters(monkeypatch, COM_NOT_REGISTERED, "C:/LO/soffice.exe")
+    src, work = _deck(tmp_path)
+    assert render.to_pdf(src, work, "auto").is_file()
+    assert calls == ["powershell", "C:/LO/soffice.exe"]
+    assert "rendering with LibreOffice" in capsys.readouterr().err
+    render.to_pdf(src, work, "auto")  # Office is probed once; later renders go straight to LibreOffice
+    assert calls == ["powershell", "C:/LO/soffice.exe", "C:/LO/soffice.exe"]
+
+
+def test_auto_without_office_or_libreoffice_says_what_to_install(tmp_path, monkeypatch):
+    _fake_converters(monkeypatch, COM_NOT_REGISTERED, None)
+    src, work = _deck(tmp_path)
+    with pytest.raises(render.RenderError, match="install Microsoft Office or LibreOffice, or pass --backend libreoffice"):
+        render.to_pdf(src, work, "auto")
+
+
+def test_explicit_office_fails_with_the_hint_and_does_not_fall_back(tmp_path, monkeypatch):
+    calls = _fake_converters(monkeypatch, COM_NOT_REGISTERED, "C:/LO/soffice.exe")
+    src, work = _deck(tmp_path)
+    with pytest.raises(render.RenderError, match="REGDB_E_CLASSNOTREG(.|\n)*--backend libreoffice"):
+        render.to_pdf(src, work, "office")
+    assert calls == ["powershell"]
+
+
+def test_other_office_failures_are_not_mistaken_for_a_missing_office(tmp_path, monkeypatch):
+    calls = _fake_converters(monkeypatch, "Exception calling Open: the file is corrupt", "C:/LO/soffice.exe")
+    src, work = _deck(tmp_path)
+    with pytest.raises(render.RenderError, match="file is corrupt") as e:
+        render.to_pdf(src, work, "auto")
+    assert not isinstance(e.value, render.OfficeMissing) and calls == ["powershell"]
+    assert render._office_missing is False
+
+
+def test_office_export_succeeds_without_touching_libreoffice(tmp_path, monkeypatch):
+    calls = _fake_converters(monkeypatch, None, "C:/LO/soffice.exe")
+    src, work = _deck(tmp_path)
+    assert render.to_pdf(src, work, "auto").is_file() and calls == ["powershell"]
 
 
 def test_office_export_quits_only_when_nothing_else_is_open():

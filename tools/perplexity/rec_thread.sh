@@ -14,7 +14,11 @@ need_engine
 case $L in perplexity-cloud|perplexity-lemonade) H=$L;; *) H=perplexity-local;; esac
 R="$KW_HOME/runs/$L/$B"; A="$KW_HOME/answers/$L-$T.md"
 mkdir -p "$KW_HOME/answers"
-powershell -NoProfile -Command "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw" | "$PY" "$HERE/thread_answer.py" > "$A"
+# The prompt marks where the answer starts in a cloud thread, which has no agent time line.
+P=$(mktemp --suffix=.txt); trap 'rm -f "$P"' EXIT
+"$PY" "$HERE/prompt.py" "$L" "$B" "$T" > "$P"
+powershell -NoProfile -Command "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw" \
+  | "$PY" "$HERE/thread_answer.py" --prompt-file "$(winpath "$P")" > "$A"
 W=$(deliverable_seconds "$R" "$T")
 run_info_args
 # A wait behind another session is not the agent's time: it is recorded apart, as --queue-seconds.
