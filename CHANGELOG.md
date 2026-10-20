@@ -3,6 +3,13 @@
 Each release's section is published as its GitHub release notes (`tools/release_notes.py`). Every result
 records the version and task fingerprint that produced it (`python tools/evalversion.py`).
 
+## v0.6.2
+
+### Fixes
+
+- **`rec_thread.sh` reads cloud threads and short local threads.** A cloud thread has no agent time line, so `tools/perplexity/thread_answer.py` now starts the answer after the prompt, which `rec_thread.sh` passes in. A thread with no Sources block runs to the end, minus the app's buttons. When it can't find an answer it stops with an error and records nothing; it never takes the whole thread. The rule is in the script's docstring.
+- **`tools/render.py` works on a Windows PC without Office.** With `--backend auto`, an Office export that fails because Office isn't installed or registered (`REGDB_E_CLASSNOTREG`) falls back to LibreOffice when `soffice` is found, and later renders go straight to it. With neither, the error says to install Microsoft Office or LibreOffice, or pass `--backend libreoffice`. `--backend office` still fails, with the same hint.
+
 ## v0.6.1
 
 Fixes from a full review of v0.6.0, for running the evals on a separate PC. They cover separate-user runs that actually work, an audit for every agent, grading that sees what a reader sees, results that record what produced them, and task definitions that no longer fail correct answers. Results graded with v0.6.0 are not comparable: the task fingerprint changed.

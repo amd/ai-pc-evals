@@ -4,12 +4,15 @@ usage: python tools/render.py <file> <out-dir> [--backend auto|office|libreoffic
 
 Everything goes through PDF: Office (PowerShell COM, Windows) or LibreOffice converts
 pptx/docx/xlsx, Chrome prints html, and PyMuPDF rasterises the pages. Images pass through.
+With --backend auto, a Windows PC without Office (its COM classes not registered) falls back to
+LibreOffice when soffice is found.
 The source is copied first, so a deliverable is never opened in place.
 """
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -47,6 +50,18 @@ class RenderError(RuntimeError):
     pass
 
 
+class OfficeMissing(RenderError):
+    """The Office export failed because Office isn't installed or its COM classes aren't registered."""
+
+
+RENDERER_HINT = "install Microsoft Office or LibreOffice, or pass --backend libreoffice"
+# What PowerShell prints when New-Object -ComObject finds no registered Office class.
+_OFFICE_MISSING = re.compile(
+    r"REGDB_E_CLASSNOTREG|80040154|Class not registered|Cannot load COM type", re.I)
+# Set once an auto-mode Office export finds Office missing, so later renders go straight to LibreOffice.
+_office_missing = False
+
+
 def office_kind(suffix: str) -> str:
     return {".pptx": "ppt", ".ppt": "ppt", ".docx": "doc", ".doc": "doc"}.get(suffix, "xls")
 
@@ -64,11 +79,11 @@ def soffice() -> str | None:
 def pick_backend(backend: str) -> str:
     if backend != "auto":
         return backend
-    if sys.platform == "win32":
+    if sys.platform == "win32" and not _office_missing:
         return "office"
     if soffice():
         return "libreoffice"
-    raise RenderError("no renderer: install LibreOffice (soffice), or run on Windows with Office")
+    raise RenderError(f"no renderer: {RENDERER_HINT}")
 
 
 def _run(cmd: list[str], what: str) -> None:
@@ -79,7 +94,45 @@ def _run(cmd: list[str], what: str) -> None:
     except FileNotFoundError as e:
         raise RenderError(f"{what}: {cmd[0]} not found") from e
     if out.returncode != 0:
-        raise RenderError(f"{what} exited {out.returncode}: {(out.stderr or out.stdout).strip()[-500:]}")
+        detail = (out.stderr or out.stdout or "").strip()
+        msg = f"{what} exited {out.returncode}: {detail[-500:]}"
+        if _OFFICE_MISSING.search(detail):
+            raise OfficeMissing(f"{msg}\nMicrosoft Office is not installed or not registered")
+        raise RenderError(msg)
+
+
+def _office_export(src: Path, pdf: Path, work: Path) -> None:
+    script = work / "export.ps1"
+    script.write_text(_PS_EXPORT, encoding="utf-8")
+    _run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+          str(script), office_kind(src.suffix.lower()), str(src.resolve()), str(pdf.resolve())],
+         f"Office export of {src.name}")
+
+
+def _libreoffice_export(src: Path, work: Path) -> None:
+    exe = soffice()
+    if not exe:
+        raise RenderError(f"LibreOffice (soffice) not found: {RENDERER_HINT}")
+    _run([exe, "--headless", f"-env:UserInstallation={(work / 'lo-profile').resolve().as_uri()}",
+          "--convert-to", "pdf", "--outdir", str(work), str(src)], f"LibreOffice export of {src.name}")
+
+
+def _convert_office(src: Path, pdf: Path, work: Path, backend: str) -> None:
+    """Office or LibreOffice; auto mode falls back to LibreOffice when Office isn't installed."""
+    global _office_missing
+    if pick_backend(backend) == "libreoffice":
+        _libreoffice_export(src, work)
+        return
+    try:
+        _office_export(src, pdf, work)
+    except OfficeMissing as e:
+        if backend != "auto":
+            raise RenderError(f"{e}: {RENDERER_HINT}") from e
+        _office_missing = True
+        if not soffice():
+            raise RenderError(f"{e}, and LibreOffice (soffice) was not found: {RENDERER_HINT}") from e
+        print("note: Microsoft Office is not available; rendering with LibreOffice", file=sys.stderr)
+        _libreoffice_export(src, work)
 
 
 def to_pdf(src: Path, work: Path, backend: str) -> Path:
@@ -96,17 +149,7 @@ def to_pdf(src: Path, work: Path, backend: str) -> Path:
     elif suffix in OFFICE:
         if suffix in (".pptx", ".docx", ".xlsx", ".xlsm") and not zipfile.is_zipfile(src):
             raise RenderError(f"not a real {suffix} file (text saved under a {suffix} name?)")
-        if pick_backend(backend) == "office":
-            script = work / "export.ps1"
-            script.write_text(_PS_EXPORT, encoding="utf-8")
-            _run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-                  str(script), office_kind(suffix), str(src.resolve()), str(pdf.resolve())], f"Office export of {src.name}")
-        else:
-            exe = soffice()
-            if not exe:
-                raise RenderError("LibreOffice (soffice) not found")
-            _run([exe, "--headless", f"-env:UserInstallation={(work / 'lo-profile').resolve().as_uri()}",
-                  "--convert-to", "pdf", "--outdir", str(work), str(src)], f"LibreOffice export of {src.name}")
+        _convert_office(src, pdf, work, backend)
     else:
         raise RenderError(f"can't render {suffix} files")
     if not pdf.is_file():
