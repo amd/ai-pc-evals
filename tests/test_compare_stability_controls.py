@@ -79,6 +79,20 @@ def test_compare_counts_contaminated_as_a_fail_and_unrecorded_and_ungraded_tasks
     assert [r[0] for r in diff["ungraded"]] == ["t2", "t3"] and not diff["vanished"]
 
 
+def test_compare_totals_leave_out_tasks_not_run_or_not_graded_but_still_list_and_gate_on_them(tmp_path, capsys):
+    base = card(tmp_path, "a", {"t1": (True, 5), "t2": (True, 5), "t3": (True, 5)})
+    new = card(tmp_path, "b", {"t1": (True, 5)})
+    path = tmp_path / "graded" / "claude-code-x" / "b" / "scorecard.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["unrecorded"], data["not_graded"] = ["t2"], ["t3"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert compare.main([base, new, "--gate"]) == 1  # BASE passed t2 and t3, which NEW didn't measure
+    out = capsys.readouterr().out
+    # As grade.render and results_tables count it: 1 of the 1 graded task, the other two listed apart.
+    assert "Base 3/3 passed · new 1/1 passed (2 not run or not graded, not counted)" in out
+    assert "| t2 |" in out and "| t3 |" in out
+
+
 def test_stability_ignores_a_run_the_judge_could_not_grade(tmp_path):
     runs = [card(tmp_path, f"r{i}", {"t1": (None if i == 2 else True, 5), "t2": (None, 0)}) for i in (1, 2, 3)]
     s = stability.summarize([compare.load(r) for r in runs])

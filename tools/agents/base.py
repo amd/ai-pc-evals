@@ -69,10 +69,9 @@ class Agent:
 
         A model name may hold characters a folder name can't ("qwen3:8b", "hf/org/model"): they become dashes.
         """
-        import re  # noqa: PLC0415
+        from kwengine.schema import leg_name  # noqa: PLC0415  (grading derives the same name)
 
-        model = re.sub(r"[^A-Za-z0-9._-]+", "-", self.model).strip("-.")
-        return f"{self.name}-{model}" if model else self.name
+        return leg_name(self.name, self.model)
 
     def check(self) -> Optional[str]:
         """Why this agent can't run here (missing CLI, login...), or None when it can."""
