@@ -211,7 +211,7 @@ def from_graded(arg: str) -> dict:
             "not_run": sorted({*(not_run or []), *(t for t in [*card.get("unrecorded", []), *card.get("not_graded", [])]
                                                    if t not in tasks)}),
             "not_run_known": found, "eval": _eval(version), "isolation": _isolation(modes),
-            "agent_version": None, "source": str(card_path.parent),
+            "agent_version": None, "source": str(card_path.parent), "judge_same_family": card.get("judge_same_family"),
             "date": datetime.date.fromtimestamp(card_path.stat().st_mtime).isoformat()}
 
 
@@ -345,8 +345,9 @@ def _version(e: dict) -> str:
 def _describe(e: dict) -> str:
     agent = " ".join(str(x) for x in (e.get("agent"), e.get("agent_version")) if x)
     what = ", ".join(str(x) for x in (agent, e.get("model"), e.get("machine")) if x)
+    same = f", judged by its own model family ({e['judge_same_family']})" if e.get("judge_same_family") else ""
     return (f"**{e['label']}** = {what} ({'cloud' if e['cloud'] else 'local'}, "
-            f"{e.get('isolation') or 'isolation not recorded'})")
+            f"{e.get('isolation') or 'isolation not recorded'}{same})")
 
 
 def render(exps: List[dict]) -> str:
