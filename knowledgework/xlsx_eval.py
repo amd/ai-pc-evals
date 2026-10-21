@@ -15,14 +15,25 @@ A cell without a cached value is evaluated here, the way Excel would:
 - SUM, AVERAGE, MIN, MAX, ROUND, ABS, COUNT, COUNTA, IF, IFS, IFERROR, IFNA, ISERROR,
   SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF, AVERAGEIFS, SUBTOTAL, SUMPRODUCT, AND, OR,
   NOT, ISNUMBER, ISBLANK;
+- dates: DATE, TODAY, NOW, YEAR, MONTH, DAY, WEEKDAY, EDATE, EOMONTH, NETWORKDAYS,
+  WORKDAY, DATEDIF ("Y", "M", "D", "YM") and DAYS, on Excel's 1900 date system:
+  serial 1 is 1900-01-01 and serial 60 is the 1900-02-29 that never was, kept
+  because Excel keeps it. A date cell (a ``datetime`` from openpyxl) computes as
+  its serial, so ``M2-DATE(2026,1,1)`` is a number of days and ``M2=DATE(...)``
+  compares the same day. A formula result in a date-formatted cell is shown as
+  openpyxl shows a cached one: a ``datetime``. TODAY and NOW are volatile: a
+  cached value is used like any other, and only a formula without one is
+  evaluated, against this machine's clock;
 - text that Excel reads as a number in arithmetic ("$200,000", "1,500", "12%")
   counts as that number, as it does in Excel.
 
 Nothing is passed to ``eval``: formulas are tokenised and parsed by a small
 recursive-descent parser. Anything else raises :class:`FormulaError` naming it,
-so a probe fails loudly instead of reading the cell as blank. Excel error values
-(division by zero, arithmetic on text) are :class:`ExcelError`, which IFERROR
-catches and which otherwise fail like any other FormulaError.
+so a probe fails loudly instead of reading the cell as blank; a function (or
+SUBTOTAL code, or DATEDIF unit) this evaluator doesn't know raises the subclass
+:class:`UnsupportedFunction`, so a caller can tell "can't check" from "wrong".
+Excel error values (division by zero, arithmetic on text) are :class:`ExcelError`,
+which IFERROR catches and which otherwise fail like any other FormulaError.
 
 ``build_fixtures.py`` stages this file as ``_xlsx_eval.py`` in the keys
 directory (``$KW_KEYS``), where probes import it.
@@ -30,14 +41,19 @@ directory (``$KW_KEYS``), where probes import it.
 
 from __future__ import annotations
 
+import calendar
+import datetime as _dt
 import fnmatch
+import math
 import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from typing import Any, Dict, List, Optional, Tuple
 
+DATE_FUNCTIONS = ("DATE", "TODAY", "NOW", "YEAR", "MONTH", "DAY", "WEEKDAY", "EDATE", "EOMONTH", "NETWORKDAYS",
+                  "WORKDAY", "DATEDIF", "DAYS")
 FUNCTIONS = ("SUM", "AVERAGE", "MIN", "MAX", "ROUND", "ABS", "COUNT", "COUNTA", "IF", "IFS", "IFERROR", "IFNA",
              "ISERROR", "SUMIF", "SUMIFS", "COUNTIF", "COUNTIFS", "AVERAGEIF", "AVERAGEIFS", "SUBTOTAL",
-             "SUMPRODUCT", "AND", "OR", "NOT", "ISNUMBER", "ISBLANK")
+             "SUMPRODUCT", "AND", "OR", "NOT", "ISNUMBER", "ISBLANK") + DATE_FUNCTIONS
 #: SUBTOTAL's function numbers (101-111: the same, ignoring hidden rows, which a file read can't see).
 SUBTOTAL = {1: "AVERAGE", 2: "COUNT", 3: "COUNTA", 4: "MAX", 5: "MIN", 9: "SUM"}
 #: Functions that read a directly referenced cell as Excel reads a range: only its numbers count.
@@ -50,6 +66,10 @@ class FormulaError(ValueError):
 
 class ExcelError(FormulaError):
     """A formula Excel itself would show as an error (#DIV/0!, #VALUE!); IFERROR catches it."""
+
+
+class UnsupportedFunction(FormulaError):
+    """A function Excel has but this evaluator doesn't: the cell can't be checked, which is not "wrong"."""
 
 
 _TOKEN = re.compile(
@@ -83,15 +103,53 @@ def _coord(text: str) -> Tuple[int, int]:
     return int(m.group(2)), _col(m.group(1))
 
 
-def excel_serial(v: Any) -> Optional[float]:
-    """A date or datetime as Excel's serial number (days since 1899-12-30), as Excel computes with it."""
-    import datetime as _dt
+_EPOCH = _dt.date(1899, 12, 30)
+#: Excel counts a 1900-02-29 (serial 60), so its serials before 1900-03-01 are one less than a real calendar's.
+_LEAP_BUG = _dt.date(1900, 3, 1)
+_MAX_SERIAL = 2958465  # 9999-12-31, Excel's last date
 
+
+def excel_serial(v: Any) -> Optional[float]:
+    """A date, datetime, time or duration as Excel's serial number, as Excel computes with it."""
     if isinstance(v, _dt.datetime):
-        return (v - _dt.datetime(1899, 12, 30)).total_seconds() / 86400
+        s = (v - _dt.datetime(1899, 12, 30)).total_seconds() / 86400
+        return s - 1 if v < _dt.datetime(1900, 3, 1) else s
     if isinstance(v, _dt.date):
-        return float((v - _dt.date(1899, 12, 30)).days)
+        s = float((v - _EPOCH).days)
+        return s - 1 if v < _LEAP_BUG else s
+    if isinstance(v, _dt.time):  # a time of day: a fraction of one day
+        return (v.hour * 3600 + v.minute * 60 + v.second + v.microsecond / 1e6) / 86400
+    if isinstance(v, _dt.timedelta):  # a duration cell ([h]:mm): days
+        return v.total_seconds() / 86400
     return None
+
+
+def _month_start(year: int, month: int) -> int:
+    """Excel's serial for day 1 of *month* (any integer: 14 is next February) of *year*, as DATE() rolls it."""
+    year, month = year + (month - 1) // 12, (month - 1) % 12 + 1
+    if not 1900 <= year <= 9999:
+        raise ValueError(f"year {year} is outside Excel's dates")
+    return int(excel_serial(_dt.date(year, month, 1)))
+
+
+def _month_days(year: int, month: int) -> int:
+    year, month = year + (month - 1) // 12, (month - 1) % 12 + 1
+    return 29 if (year, month) == (1900, 2) else calendar.monthrange(year, month)[1]
+
+
+def _ymd(serial: int) -> Tuple[int, int, int]:
+    """Year, month and day of a whole serial, as Excel reads it (0 is 1900-01-00, 60 is 1900-02-29)."""
+    if not 0 <= serial <= _MAX_SERIAL:
+        raise ValueError(f"{serial} is not an Excel date")
+    if serial in (0, 60):
+        return (1900, 1, 0) if serial == 0 else (1900, 2, 29)
+    d = _EPOCH + _dt.timedelta(days=serial + (1 if serial < 60 else 0))
+    return d.year, d.month, d.day
+
+
+def _weekday(serial: int) -> int:
+    """Monday 0 .. Sunday 6, on Excel's calendar (which makes 1900-01-01 a Sunday)."""
+    return (serial - 2) % 7
 
 
 def number_from_text(text: str) -> Optional[float]:
@@ -135,7 +193,7 @@ class Workbook:
         raw = self._f[sheet].cell(row=row, column=col).value
         if cached is not None or not (isinstance(raw, str) and raw.startswith("=")):
             if raw is not None and not isinstance(raw, (str, int, float, bool)) and cached is None:
-                if hasattr(raw, "date"):  # a date or datetime cell: a value, shown as such
+                if excel_serial(raw) is not None:  # a date, time or duration cell: a value, shown as such
                     result = raw
                 else:
                     raise FormulaError(f"{sheet}!{self._name(row, col)}: unsupported formula type {type(raw).__name__}")
@@ -149,8 +207,25 @@ class Workbook:
                 result = _Parser(self, sheet, raw[1:], f"{sheet}!{self._name(row, col)}").parse()
             finally:
                 self._busy.discard(key)
+            result = self._as_shown(sheet, row, col, result)
         self._memo[key] = result
         return result
+
+    def _as_shown(self, sheet: str, row: int, col: int, result: Any) -> Any:
+        """A computed number in a date-formatted cell as openpyxl reads a cached one: a datetime (or time,
+        or timedelta for a duration format), so it reads the same whether or not Excel saved the file."""
+        if isinstance(result, bool) or not isinstance(result, (int, float)):
+            return result
+        from openpyxl.styles.numbers import is_date_format, is_timedelta_format
+        from openpyxl.utils.datetime import from_excel
+
+        fmt = self._f[sheet].cell(row=row, column=col).number_format
+        if not is_date_format(fmt):
+            return result
+        try:
+            return from_excel(result, timedelta=is_timedelta_format(fmt))
+        except (OverflowError, ValueError):
+            return result
 
     @staticmethod
     def _name(row: int, col: int) -> str:
@@ -202,7 +277,7 @@ class _Parser:
             elif m.group("fn"):
                 name = m.group("fn").upper()
                 if name not in FUNCTIONS:
-                    raise FormulaError(f"{where}: unsupported function {name}() in '={text}'")
+                    raise UnsupportedFunction(f"{where}: unsupported function {name}() in '={text}'")
                 self.toks.append(("fn", name))
             elif m.group("bool"):
                 self.toks.append(("bool", m.group("bool").upper() == "TRUE"))
@@ -246,6 +321,8 @@ class _Parser:
             return ""
         if isinstance(v, bool):
             return "TRUE" if v else "FALSE"
+        if excel_serial(v) is not None:  # Excel joins a date as its serial: "<"&M2 is "<46314"
+            v = excel_serial(v)
         if isinstance(v, float) and v.is_integer():
             return str(int(v))
         return str(v)
@@ -531,8 +608,8 @@ class _Parser:
         if name == "NOT":
             return not self._bool(self._scalar(args[0]))
         if name == "ISNUMBER":
-            v = self._scalar(args[0])
-            return isinstance(v, (int, float)) and not isinstance(v, bool)
+            v = self._scalar(args[0])  # a date is a number to Excel
+            return (isinstance(v, (int, float)) and not isinstance(v, bool)) or excel_serial(v) is not None
         if name == "ISBLANK":
             return self._scalar(args[0]) is None
         if name in ("SUMIF", "COUNTIF"):
@@ -575,7 +652,7 @@ class _Parser:
             code = int(self._num(self._scalar(args[0]))) if args else 0
             inner = SUBTOTAL.get(code % 100 if code > 100 else code)
             if inner is None:
-                raise FormulaError(f"{self.where}: unsupported SUBTOTAL function {code}")
+                raise UnsupportedFunction(f"{self.where}: unsupported SUBTOTAL function {code}")
             return self._apply(inner, args[1:])
         if name == "SUMPRODUCT":
             cols = [a.values if isinstance(a, _Range) else [a] for a in args]
@@ -588,7 +665,114 @@ class _Parser:
                     prod *= float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
                 total += prod
             return total
-        raise FormulaError(f"{self.where}: unsupported function {name}()")
+        if name in DATE_FUNCTIONS:
+            return self._date(name, args)
+        raise UnsupportedFunction(f"{self.where}: unsupported function {name}()")
+
+    # ---- dates (Excel serials; results are numbers, shown as dates by the cell's format) ----------
+    def _count(self, name: str, args: List[Any], least: int, most: int) -> None:
+        if not least <= len(args) <= most:
+            want = str(least) if least == most else f"{least} to {most}"
+            raise FormulaError(f"{self.where}: {name} needs {want} arguments, not {len(args)}")
+
+    def _day(self, a: Any) -> int:
+        """A date argument as a whole serial (Excel drops the time of day); outside Excel's dates is #NUM!."""
+        s = math.floor(self._num(self._scalar(a)))
+        if not 0 <= s <= _MAX_SERIAL:
+            raise ExcelError(f"{self.where}: {s} is not an Excel date (#NUM!)")
+        return s
+
+    def _holidays(self, a: Any) -> set:
+        return {self._day(v) for v in (a.values if isinstance(a, _Range) else [a]) if v is not None}
+
+    def _date(self, name: str, args: List[Any]) -> float:
+        try:
+            return float(self._date_value(name, args))
+        except FormulaError:  # a ValueError too: it stays what it is (an UnsupportedFunction isn't #NUM!)
+            raise
+        except ValueError as exc:  # a date outside 1900-01-00 .. 9999-12-31
+            raise ExcelError(f"{self.where}: {name}: {exc} (#NUM!)") from exc
+
+    def _date_value(self, name: str, args: List[Any]) -> float:
+        def ints(a: Any) -> int:  # Excel truncates these arguments to whole numbers
+            return int(self._num(self._scalar(a)))
+
+        if name in ("TODAY", "NOW"):
+            self._count(name, args, 0, 0)
+            now = _dt.datetime.now()
+            return excel_serial(now) if name == "NOW" else excel_serial(now.date())
+        if name == "DATE":
+            self._count(name, args, 3, 3)
+            year, month, day = (ints(a) for a in args)
+            if not 0 <= year <= 9999:
+                raise ValueError(f"year {year}")
+            year += 1900 if year < 1900 else 0  # DATE(26, 1, 1) is 1926, as in Excel
+            serial = _month_start(year, month) + day - 1  # days and months roll over: DATE(2026, 14, 1)
+            if not 0 <= serial <= _MAX_SERIAL:
+                raise ValueError(f"DATE({year}, {month}, {day}) is outside Excel's dates")
+            return serial
+        if name in ("YEAR", "MONTH", "DAY"):
+            self._count(name, args, 1, 1)
+            return _ymd(self._day(args[0]))[("YEAR", "MONTH", "DAY").index(name)]
+        if name == "WEEKDAY":
+            self._count(name, args, 1, 2)
+            mon0 = _weekday(self._day(args[0]))
+            kind = ints(args[1]) if len(args) > 1 else 1
+            if kind == 3:
+                return mon0  # Monday 0 .. Sunday 6
+            first = {1: 6, 2: 0, 11: 0, 12: 1, 13: 2, 14: 3, 15: 4, 16: 5, 17: 6}.get(kind)  # weekday numbered 1
+            if first is None:
+                raise ExcelError(f"{self.where}: WEEKDAY return type {kind} (#NUM!)")
+            return (mon0 - first) % 7 + 1
+        if name in ("EDATE", "EOMONTH"):
+            self._count(name, args, 2, 2)
+            year, month, day = _ymd(self._day(args[0]))
+            month += ints(args[1])
+            first, days = _month_start(year, month), _month_days(year, month)  # 31-Jan + 1 month is 28-Feb
+            return first + (days if name == "EOMONTH" else min(day, days)) - 1
+        if name == "DAYS":
+            self._count(name, args, 2, 2)
+            return self._day(args[0]) - self._day(args[1])
+        if name == "DATEDIF":
+            self._count(name, args, 3, 3)
+            start, end = self._day(args[0]), self._day(args[1])
+            unit = self._text(self._scalar(args[2])).upper()
+            if start > end:
+                raise ExcelError(f"{self.where}: DATEDIF start is after its end (#NUM!)")
+            if unit == "D":
+                return end - start
+            if unit in ("MD", "YD"):
+                raise UnsupportedFunction(f"{self.where}: unsupported DATEDIF unit {unit!r}")
+            (y1, m1, d1), (y2, m2, d2) = _ymd(start), _ymd(end)
+            months = (y2 - y1) * 12 + m2 - m1 - (1 if d2 < d1 else 0)  # whole months only
+            if unit not in ("Y", "M", "YM"):
+                raise ExcelError(f"{self.where}: DATEDIF unit {unit!r} (#NUM!)")
+            return {"Y": months // 12, "M": months, "YM": months % 12}[unit]
+        if name == "NETWORKDAYS":
+            self._count(name, args, 2, 3)
+            start, end = self._day(args[0]), self._day(args[1])
+            sign = 1 if start <= end else -1  # reversed dates count negative, as in Excel
+            start, end = min(start, end), max(start, end)
+            weeks = (end - start + 1) // 7
+            count = weeks * 5 + sum(1 for d in range(start + weeks * 7, end + 1) if _weekday(d) < 5)
+            off = self._holidays(args[2]) if len(args) > 2 else set()
+            count -= sum(1 for d in off if start <= d <= end and _weekday(d) < 5)
+            return sign * count
+        if name == "WORKDAY":
+            self._count(name, args, 2, 3)
+            day, left = self._day(args[0]), ints(args[1])
+            off = self._holidays(args[2]) if len(args) > 2 else set()
+            step = 1 if left > 0 else -1
+            for _ in range(abs(left)):  # a working day is a weekday that isn't a holiday
+                day += step
+                while _weekday(day) >= 5 or day in off:
+                    day += step
+                    if not 0 <= day <= _MAX_SERIAL:
+                        raise ValueError("WORKDAY runs past Excel's dates")
+            if not 0 <= day <= _MAX_SERIAL:
+                raise ValueError("WORKDAY runs past Excel's dates")
+            return day
+        raise UnsupportedFunction(f"{self.where}: unsupported function {name}()")
 
 
 class _Untaken:
@@ -620,8 +804,8 @@ def _criterion(crit: Any):
     n = number_from_text(rhs) if rhs.strip() else None
     if n is not None:
         def num_test(v: Any) -> bool:
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
-                return _compare(v, op, n)
+            if (isinstance(v, (int, float)) and not isinstance(v, bool)) or excel_serial(v) is not None:
+                return _compare(v, op, n)  # a date cell meets "<"&TODAY() as its serial
             return op == "<>"
         return num_test
     if op in ("=", "<>") and any(ch in rhs for ch in "*?"):

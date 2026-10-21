@@ -66,7 +66,7 @@ def test_controls_send_the_reference_each_wrong_answer_and_an_empty_reply(monkey
     assert len(report["failed"]) == 1
 
 
-def test_compare_counts_contaminated_and_unrecorded_as_fails_and_an_ungraded_task_as_neither(tmp_path):
+def test_compare_counts_contaminated_as_a_fail_and_unrecorded_and_ungraded_tasks_as_neither(tmp_path):
     base = card(tmp_path, "a", {"t1": (True, 5), "t2": (True, 5), "t3": (True, 5), "t4": (True, 5)})
     new = card(tmp_path, "b", {"t1": (True, 5), "t2": (None, 0), "t4": (True, 5)})
     data = json.loads((tmp_path / "graded" / "claude-code-x" / "b" / "scorecard.json").read_text(encoding="utf-8"))
@@ -74,8 +74,9 @@ def test_compare_counts_contaminated_and_unrecorded_as_fails_and_an_ungraded_tas
     data["unrecorded"] = ["t3"]
     (tmp_path / "graded" / "claude-code-x" / "b" / "scorecard.json").write_text(json.dumps(data), encoding="utf-8")
     diff = compare.compare(compare.load(base), compare.load(new))
-    assert [r[0] for r in diff["regressed"]] == ["t1", "t3"]  # contaminated; prepared but never recorded
-    assert [r[0] for r in diff["ungraded"]] == ["t2"] and not diff["vanished"]
+    assert [r[0] for r in diff["regressed"]] == ["t1"]  # contaminated
+    # Prepared but never recorded: not run, no verdict; a gate still fails on it, since BASE passed it.
+    assert [r[0] for r in diff["ungraded"]] == ["t2", "t3"] and not diff["vanished"]
 
 
 def test_stability_ignores_a_run_the_judge_could_not_grade(tmp_path):
