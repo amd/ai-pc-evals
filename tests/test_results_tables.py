@@ -103,7 +103,7 @@ def test_published_perplexity_scoreboard_still_renders():
     assert "| **All** (16) | 12/16 · Q 4.4 · 52m 48s · $19.78 | 1/1 · Q 4.8 · 3m 57s |" in out
     # docs/RESULTS.md shows excerpts of this output: every rendered line it quotes must still be true
     docs = (REPO / "docs" / "RESULTS.md").read_text(encoding="utf-8")
-    section = docs[docs.index("## Comparing experiments"):docs.index("## Checking results")]
+    section = docs[docs.index("## Comparing experiments"):docs.index("## Comparing how deliverables look")]
     quoted = [ln for ln in section.splitlines() if ln.startswith(("| ", "⚠️", "Experiments:"))]
     assert len(quoted) > 10
     for line in quoted:
