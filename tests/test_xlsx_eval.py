@@ -841,3 +841,18 @@ def criteria_book(tmp_path, formula):
 ])
 def test_criteria_and_comparisons_follow_excel(tmp_path, formula, expected):
     assert criteria_book(tmp_path, formula) == expected
+
+
+def test_every_cell_of_a_multi_cell_array_formula_is_computed(tmp_path):
+    # openpyxl gives the formula only at the anchor; xlsxwriter saves 0 in the other cells for Excel to fill.
+    xlsxwriter = pytest.importorskip("xlsxwriter")
+    path = tmp_path / "a.xlsx"
+    book = xlsxwriter.Workbook(str(path))
+    sheet = book.add_worksheet("S")
+    sheet.write("A2", 10)
+    sheet.write("B2", 14)
+    sheet.write_array_formula("D2:E2", "{=A2:B2*1}")
+    sheet.write_formula("F2", "=D2+E2")
+    book.close()
+    wb = xlsx_eval.Workbook(path)
+    assert (wb.value("S", 2, 4), wb.value("S", 2, 5), wb.value("S", 2, 6)) == (10, 14, 24)

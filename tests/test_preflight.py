@@ -185,7 +185,7 @@ def test_maintainer_folders_are_never_swept_and_strict_checks_layer_4_keeps_the_
     monkeypatch.setattr(isolation, "can_read", lambda path, user: None)  # icacls failed: not shown kept out
     strict = preflight.run(manifest=env["repo"] / "secrets" / "manifest.json", home=env["home"], repo=env["repo"],
                            env={"KW_AGENT_USER": "kwagent"}, sanctioned=[graded], strict=True)
-    assert set(failed_paths(strict)) == {graded, env["repo"]} and "could not be read" in strict.failures[0].reason
+    assert set(failed_paths(strict)) == {graded, env["repo"]} and "couldn't be read" in strict.failures[0].reason
     # A key copied anywhere else still fails strict.
     (env["home"] / "Documents" / "k.json").write_text(key_text(env), encoding="utf-8")
     assert env["home"] / "Documents" / "k.json" in failed_paths(run(env, sanctioned=[graded], strict=True))
@@ -204,11 +204,13 @@ Successfully processed 1 files; Failed processing 0 files
     # A deny for the user wins even where every user is granted read.
     (r"C:\Users\me\ai-pc-evals", ICACLS_DENIED.replace("NT AUTHORITY", r"BUILTIN\Users:(OI)(CI)(RX)" + "\n NT AUTHORITY"),
      False),
-    # Only the maintainer, SYSTEM and Administrators: a standard agent user can't read it.
-    (r"C:\x", r"C:\x PC\me:(OI)(CI)(F)" + "\n" + r" BUILTIN\Administrators:(I)(OI)(CI)(F)", False),
+    # No deny by name and no grant it recognises: it can't tell (a group it can't resolve may grant read), so
+    # only an explicit deny counts as keeping the agent user out.
+    (r"C:\x", r"C:\x PC\me:(OI)(CI)(F)" + "\n" + r" BUILTIN\Administrators:(I)(OI)(CI)(F)", None),
+    (r"C:\x", r"C:\x PC\me:(OI)(CI)(F)" + "\n" + r" VORDEFINIERT\Benutzer:(I)(OI)(CI)(RX)", None),  # German Users
     (r"C:\x", r"C:\x PC\me:(OI)(CI)(F)" + "\n" + r" BUILTIN\Users:(I)(OI)(CI)(RX)", True),
     (r"C:\x", r"C:\x PC\me:(F)" + "\n" + r" PC\kwagent:(I)(OI)(CI)(M)", True),
-    (r"C:\x", r"C:\x Everyone:(OI)(CI)(IO)(R)" + "\n Everyone:(W)", False),  # inherit-only; write only
+    (r"C:\x", r"C:\x Everyone:(OI)(CI)(IO)(R)" + "\n Everyone:(W)", None),  # inherit-only; write only
 ])
 def test_can_read_reads_the_agent_users_access_from_icacls(monkeypatch, path, listing, expected):
     import subprocess

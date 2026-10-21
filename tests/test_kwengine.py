@@ -1724,3 +1724,11 @@ def test_a_partial_regrade_keeps_the_same_family_flag_and_the_card_says_when_the
     _fake_judge(monkeypatch)
     card = grade.grade_run(run_dir, "judge-model", {})
     assert card["prepared_at"] == workspace.read_run(run_dir)["prepared_at"]
+
+
+def test_a_leg_folder_name_never_makes_an_ordinary_word_a_brand(tmp_path):
+    run_dir = tmp_path / "runs" / "hermes-qwen3-32b" / "kw-1"
+    legs = grade.legs_of(run_dir, "hermes", "qwen3-32b")
+    blind = grade.blinder(run_dir, run_dir / "kw-05", ["hermes", "qwen3-32b", *legs])
+    assert blind("Luxury brands: Hermes and LVMH; ran on hermes-qwen3-32b.") == \
+        "Luxury brands: Hermes and LVMH; ran on <agent>."

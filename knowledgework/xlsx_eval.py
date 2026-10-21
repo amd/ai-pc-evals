@@ -335,6 +335,7 @@ class Workbook:
         self.date1904 = getattr(self._f, "epoch", None) == CALENDAR_MAC_1904
         self._memo: Dict[Tuple[str, int, int], Any] = {}
         self._busy: set = set()
+        self._spills: Dict[str, Dict[Tuple[int, int], Tuple[str, str]]] = {}
 
     @property
     def sheetnames(self) -> List[str]:
@@ -359,6 +360,12 @@ class Workbook:
             # openpyxl's ArrayFormula: a {=...} array formula, or a dynamic-array one (xlsxwriter writes
             # XLOOKUP and other new functions so); its result spills over the cells of *ref*.
             formula, spill = raw.text if raw.text.startswith("=") else "=" + raw.text, raw.ref
+        if formula is None and raw is None or formula is None and self.full_calc and isinstance(raw, (int, float)):
+            # A cell inside a multi-cell array formula's range other than its anchor: openpyxl gives the formula
+            # only at the anchor, and the cell holds no value or xlsxwriter's placeholder.
+            covered = self._spill_map(sheet).get((row, col))
+            if covered is not None and (cached is None or self.full_calc):
+                formula, spill = covered
         if formula is not None and (cached is None or self.full_calc):
             if key in self._busy:
                 raise FormulaError(f"{where}: circular reference")
@@ -384,6 +391,25 @@ class Workbook:
             result = cached if cached is not None else raw
         self._memo[key] = result
         return result
+
+    def _spill_map(self, sheet: str) -> Dict[Tuple[int, int], Tuple[str, str]]:
+        """Every non-anchor cell of the sheet's multi-cell array formulas -> (the anchor's formula, its range)."""
+        if sheet not in self._spills:
+            covered: Dict[Tuple[int, int], Tuple[str, str]] = {}
+            for cells in self._f[sheet].iter_rows():
+                for cell in cells:
+                    raw = cell.value
+                    ref = getattr(raw, "ref", None)
+                    if not (isinstance(getattr(raw, "text", None), str) and isinstance(ref, str) and ":" in ref):
+                        continue
+                    formula = raw.text if raw.text.startswith("=") else "=" + raw.text
+                    (top, left), (bottom, right) = (_coord(part) for part in ref.split(":", 1))
+                    for r in range(top, bottom + 1):
+                        for c in range(left, right + 1):
+                            if (r, c) != (top, left):
+                                covered[(r, c)] = (formula, ref)
+            self._spills[sheet] = covered
+        return self._spills[sheet]
 
     def _as_shown(self, sheet: str, row: int, col: int, result: Any) -> Any:
         """A computed number in a date-formatted cell as openpyxl reads a cached one: a datetime (or time,
