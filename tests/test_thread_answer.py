@@ -125,3 +125,25 @@ def test_an_answer_that_repeats_the_prompt_or_holds_a_time_line_is_kept_whole():
     local = PROMPT + "\n\nLocal agent: qwen3-32b\n\n2m 51s\n\n" + answer + "\n"
     assert ta.extract(local) == answer
     assert ta.extract(local, PROMPT) == answer
+
+
+@pytest.mark.parametrize("line", [
+    "Cloud agent mode adds latency, so the run took longer.",
+    "Local agent: it ran everything on this PC. That is why it was slow.",
+    "Cloud agent: is it worth the credits?",
+])
+def test_an_answer_line_starting_like_an_agent_header_does_not_cut_the_answer(line):
+    answer = f"The report finds three risks.\n\n{line}\n\n- Cost overrun\n- Delay"
+    local = PROMPT + "\n\nLocal agent: qwen3-32b\n\n2m 51s\n\n" + answer + "\n\nSources\n\n1 report.pdf\n"
+    assert ta.extract(local) == answer
+    assert ta.extract(local, PROMPT) == answer
+    cloud = PROMPT + "\n\n" + answer + "\n\nSources\n\n1 report.pdf\n"
+    assert ta.extract(cloud, PROMPT) == answer
+
+
+def test_a_header_shaped_line_inside_the_answer_is_not_a_turn_without_a_time_after_it():
+    answer = "Setup used:\n\nLocal agent: qwen3-32b\n\nIt answered from the files."
+    local = PROMPT + "\n\nLocal agent: qwen3-32b\n\n45s\n\n" + answer + "\n"
+    assert ta.extract(local) == answer
+    assert ta.AGENT_LINE.match("Local agent: Qwen3.5-35B-A3B") and ta.AGENT_LINE.match("Cloud agent: Opus 5.5")
+    assert not ta.AGENT_LINE.match("Local agent")  # the app's header has the colon and the model

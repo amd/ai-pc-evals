@@ -116,6 +116,84 @@ def test_the_waiter_hints_once_that_a_quiet_agent_may_be_waiting_for_input(tmp_p
     assert out.count("may be waiting for your input") == 1 and "stalled-asked-human" in out
 
 
+def test_an_answer_only_task_waits_for_enter_or_a_done_mark_not_30_seconds(tmp_path, monkeypatch, capsys):
+    import threading
+
+    run = tmp_path / "runs" / "perplexity-cloud" / "b1"
+    (run / "kw-02").mkdir(parents=True)
+    (run / ".start-kw-02").write_text("1000", encoding="utf-8")
+    clock = [1000.0]
+    monkeypatch.setattr(wait_task, "EVAL_HOME", tmp_path)
+    monkeypatch.setattr(wait_task, "find_task", lambda tid: {"deliverables": [], "max_minutes": 30})
+    monkeypatch.setattr(wait_task.time, "time", lambda: clock[0])
+    pressed = threading.Event()
+
+    def sleep(s):  # the operator presses Enter four minutes in
+        clock[0] += s
+        if clock[0] >= 1240:
+            pressed.set()
+    monkeypatch.setattr(wait_task.time, "sleep", sleep)
+    monkeypatch.setattr(wait_task, "_enter_pressed", lambda: pressed)
+    assert wait_task.main("perplexity-cloud", "b1", "kw-02") == 0
+    assert (run / ".done-kw-02").read_text(encoding="utf-8").strip() == "1240"
+    assert "press Enter" in capsys.readouterr().out
+    # Or a done mark made by hand (empty: its own time is taken), and nothing at all times out at the cap.
+    (run / ".done-kw-02").write_text("", encoding="utf-8")
+    import os
+    os.utime(run / ".done-kw-02", (1300, 1300))
+    monkeypatch.setattr(wait_task, "_enter_pressed", lambda: threading.Event())
+    assert wait_task.main("perplexity-cloud", "b1", "kw-02") == 0
+    assert (run / ".done-kw-02").read_text(encoding="utf-8").strip() == "1300"
+    (run / ".done-kw-02").unlink()
+    assert wait_task.main("perplexity-cloud", "b1", "kw-02") == 1 and "TIMEOUT" in capsys.readouterr().out
+
+
+def test_the_waiter_ignores_a_file_deleted_while_it_looks(tmp_path, monkeypatch):
+    folder = tmp_path / "t"
+    folder.mkdir()
+    (folder / "keep.md").write_text("x", encoding="utf-8")
+    gone = folder / "~$lock.xlsx"
+    gone.write_text("x", encoding="utf-8")
+    real_stat = type(gone).stat
+
+    def stat(self, *a, **k):
+        if self.name == gone.name:
+            raise FileNotFoundError(2, "gone", str(self))
+        return real_stat(self, *a, **k)
+    monkeypatch.setattr(type(gone), "stat", stat)
+    assert wait_task.latest(folder) == real_stat(folder / "keep.md").st_mtime
+
+
+def _git_bash():
+    import shutil
+
+    bash = shutil.which("bash")
+    if not bash or "system32" in bash.lower():  # WSL's bash.exe can't see this test's paths
+        return None
+    return bash
+
+
+@pytest.mark.skipif(_git_bash() is None, reason="needs bash (Git Bash on Windows)")
+def test_record_time_runs_to_the_done_mark_and_is_never_silently_zero(tmp_path):
+    import subprocess
+    from pathlib import Path
+
+    env_sh = Path(wait_task.__file__).with_name("_env.sh").as_posix()
+    run = tmp_path / "run"
+    (run / "kw-02").mkdir(parents=True)
+    (run / ".start-kw-02").write_text("1000\n", encoding="utf-8")
+
+    def seconds(outcome=""):
+        script = f'. "{env_sh}"; KW_OUTCOME={outcome} deliverable_seconds "{run.as_posix()}" kw-02'
+        return subprocess.run([_git_bash(), "-c", script], capture_output=True, text=True)
+
+    out = seconds()
+    assert out.returncode != 0 and "done mark" in out.stderr  # nothing to time it by: an error, not 0
+    assert seconds("did-not-run").stdout.strip() == "0"
+    (run / ".done-kw-02").write_text("1240\n", encoding="utf-8")
+    assert seconds().stdout.strip() == "240"
+
+
 @pytest.mark.parametrize("args", [["--help"]])
 def test_engine_info_has_a_cli(args):
     with pytest.raises(SystemExit) as exc:

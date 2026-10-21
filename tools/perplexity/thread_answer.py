@@ -12,7 +12,9 @@ A copied thread is the prompt, then the agent's turn, then the app's chrome:
 
 The rule, applied to the last turn in the thread:
 
-1. Start: the last turn begins at its agent header ('Local agent: ...', 'Cloud agent: ...');
+1. Start: the last turn begins at its agent header ('Local agent: <model>', 'Cloud agent:
+   <model>': a short line with a colon and no sentence punctuation, followed by the agent's
+   time or step count; an answer line that merely starts with those words is not one);
    with none, at the end of the last place the whole prompt appears, every non-blank line in
    order (when --prompt-file gives it; cloud copies need it); with neither, at the first
    agent time ('45s', '2m 51s', '1h 2m 3s', optionally after 'Finished'/'Completed'/'Worked
@@ -34,7 +36,9 @@ import sys
 
 _DURATION = r"(?:\d+h ?)?(?:\d+m ?)?\d+s"
 TIME_LINE = re.compile(rf"^(?:(?:Finished|Completed|Worked)(?: in| for)? )?{_DURATION}$", re.I)
-AGENT_LINE = re.compile(r"^(?:Local|Cloud) agent\b.*$", re.I)
+#: The app's agent header: "Local agent: <model>", short, a model name rather than a sentence (no ". ", "?", "!",
+#: ";", no trailing period). An answer line such as "Cloud agent mode adds latency." is not one.
+AGENT_LINE = re.compile(r"^(?:Local|Cloud) agent: ?(?!.*(?:[.!?;]\s|[.!?;]$))\S.{0,60}$", re.I)
 STEP_LINE = re.compile(r"^(?:(?:Finished|Completed|Ran) )?\d+ steps?(?: completed)?$", re.I)
 SECTION_LINE = re.compile(r"^(?:Sources|Usage)$")
 CHROME_LINE = re.compile(r"^(?:Share|Export|Rewrite|Copy)$")
@@ -46,6 +50,12 @@ class NoAnswer(ValueError):
 
 def _is_preamble(line: str) -> bool:
     return bool(TIME_LINE.match(line) or AGENT_LINE.match(line) or STEP_LINE.match(line))
+
+
+def _opens_turn(stripped: list, i: int) -> bool:
+    """An agent header opens its turn: the agent's time or step count comes next, before the answer body."""
+    nxt = next((s for s in stripped[i + 1:] if s), "")
+    return bool(TIME_LINE.match(nxt) or STEP_LINE.match(nxt))
 
 
 def extract(text: str, prompt: str | None = None) -> str:
@@ -60,7 +70,7 @@ def extract(text: str, prompt: str | None = None) -> str:
     # answer may repeat the prompt's last line or hold a line such as "45s".
     anchor = None
     for i, s in enumerate(stripped):
-        if AGENT_LINE.match(s):
+        if AGENT_LINE.match(s) and _opens_turn(stripped, i):
             anchor = i
     if anchor is None and prompt_lines:
         filled = [i for i, s in enumerate(stripped) if s]
