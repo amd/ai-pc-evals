@@ -960,24 +960,23 @@ def _fake_judge(monkeypatch, verdict=True, sent=None, cmds=None):
         if cmds is not None:
             cmds.append(cmd)
 
+        grade_ = {
+            "instruction_compliance": 5,
+            "work_quality": 4,
+            "accuracy": 5,
+            "completeness": 4,
+            "fabrication_free": 5,
+            "answers_correctly": verdict,
+            "missing": "" if verdict else "the invoice",
+            "one_line": "ok",
+        }
+        keys = re.findall(r"=== ATTEMPT (attempt-[0-9a-f]+) ", kwargs["input"])  # as the judge is asked
+
         class Proc:
             returncode, stderr = 0, ""
             stdout = json.dumps(
                 {
-                    "result": json.dumps(
-                        {
-                            SMOKE: {
-                                "instruction_compliance": 5,
-                                "work_quality": 4,
-                                "accuracy": 5,
-                                "completeness": 4,
-                                "fabrication_free": 5,
-                                "answers_correctly": verdict,
-                                "missing": "" if verdict else "the invoice",
-                                "one_line": "ok",
-                            }
-                        }
-                    ),
+                    "result": json.dumps({key: grade_ for key in keys}),
                     "total_cost_usd": 0.1,
                 }
             )
@@ -1555,3 +1554,21 @@ def test_blinding_takes_a_posix_paths_leading_slash_too(tmp_path):
     blind = grade.blinder(tmp_path / "copy", tmp_path / "copy" / "pc-10", [], prepared_as=there)
     assert blind(f"Saved {there}/deck.pptx and /home/tester/kw-eval/runs/perplexity-local/portable-1/.records") == \
         "Saved <task folder>/deck.pptx and <run folder>/.records"
+
+
+def test_two_legs_are_judged_together_under_keys_that_name_neither(tmp_path, monkeypatch):
+    cloud = tmp_path / "runs" / "perplexity-cloud" / "r1"
+    local = tmp_path / "runs" / "perplexity-local" / "r1"
+    for run_dir, leg in ((cloud, "perplexity-cloud"), (local, "perplexity-local")):
+        workspace.prepare_suite("smoke", run_dir)
+        (run_dir / SMOKE / "summary.md").write_text(GOOD_SUMMARY)
+        _record(run_dir, harness=leg)
+    sent = []
+    _fake_judge(monkeypatch, sent=sent)
+    cards = grade.grade_runs([cloud, local], "judge-model", {})
+    (payload,) = sent  # one batch holds both legs' attempts
+    keys = re.findall(r"=== ATTEMPT (\S+) ", payload)
+    assert len(keys) == 2 and all(k.startswith("attempt-") for k in keys) and SMOKE not in keys
+    assert "perplexity" not in payload.lower() and "runs" not in payload
+    assert [c["harness"] for c in cards] == ["perplexity-cloud", "perplexity-local"]
+    assert all(c["tasks"][0]["passed"] for c in cards) and (cloud / "scorecard.json").is_file()

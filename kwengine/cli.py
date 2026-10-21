@@ -173,7 +173,11 @@ def build_parser() -> argparse.ArgumentParser:
     grade = actions.add_parser(
         "grade", help="Check, judge and score every recorded task; write scorecard.json"
     )
-    grade.add_argument("run_dir", help="Directory `prepare` made")
+    grade.add_argument(
+        "run_dir",
+        nargs="+",
+        help="Directory `prepare` made; give several (two legs, say) to judge them together, shuffled",
+    )
     grade.add_argument(
         "--judge-model",
         default=None,
@@ -295,15 +299,17 @@ def run(args: argparse.Namespace) -> None:
                     scores = " ".join(f"{a}={g[a]}" for a in grade.KW_AXES)
                     print(f"  {task_id}: {scores} | {g['one_line']}")
 
-            turns.check(Path(args.run_dir))  # a separate-user task changed after its turn is contaminated
+            run_dirs = [Path(d) for d in args.run_dir]
+            for run_dir in run_dirs:  # a separate-user task changed after its turn is contaminated
+                turns.check(run_dir)
             judge_model = args.judge_model or DEFAULT_CLAUDE_MODEL
             print(f"[JUDGE] {judge_model}")
             answers = None
             if getattr(args, "answers_stdin", False):
                 # The decrypted answers, piped in by tools/grade_run.py: never written to disk here.
                 answers = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-            card = grade.grade_run(
-                Path(args.run_dir),
+            cards = grade.grade_runs(
+                run_dirs,
                 judge_model,
                 dict(os.environ),
                 answers=answers,
@@ -314,9 +320,10 @@ def run(args: argparse.Namespace) -> None:
                 on_progress=_progress,
                 only=[t.strip() for t in (args.tasks or "").split(",") if t.strip()] or None,
             )
-            print()
-            print(grade.render(card))
-            print(f"[SCORECARD] {(Path(args.run_dir) / 'scorecard.json').resolve()}")
+            for run_dir, card in zip(run_dirs, cards):
+                print()
+                print(grade.render(card))
+                print(f"[SCORECARD] {(run_dir / 'scorecard.json').resolve()}")
             return
     except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
         print(f"❌ {exc}")
