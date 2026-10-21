@@ -300,9 +300,12 @@ def test_grading_leftovers_are_flagged(env):
     build = env["tmp"] / "temp" / "kw-build-keys-y"
     probe.mkdir()
     build.mkdir()
+    # Under Layer 4 a probe runs as the agent user from the eval home's work root: a killed one leaves its key there.
+    agent_probe = eval_home / ".runas" / "probes" / "kw-probe-pc-08-y"
+    agent_probe.mkdir(parents=True)
     found = preflight.check_known(env["home"], env["repo"], None, {}, eval_home, env["tmp"] / "temp")
     paths = {Path(f.path) for f in found}
-    assert {run, stale, probe, build} <= paths
+    assert {run, stale, probe, build, agent_probe} <= paths
     assert any("--relocate-only" in f.fix for f in found if Path(f.path) == run)
 
 
