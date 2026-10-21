@@ -41,7 +41,7 @@
     "web"
    ],
    "check": "both",
-   "max_minutes": 45,
+   "max_minutes": 30,
    "tags": [
     "live-data"
    ]
