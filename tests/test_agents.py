@@ -805,3 +805,16 @@ def test_a_manual_run_is_graded_only_once_the_app_is_closed(tmp_path, monkeypatc
     assert graded == [tmp_path / "out2"]
     go(3, tty=False, agent_closed=True)  # said up front (scripting): not asked
     assert len(asked) == 1 and graded[-1] == tmp_path / "out3"
+
+
+def test_regrading_an_app_driven_run_asks_that_the_app_is_closed(tmp_path, monkeypatch):
+    run = tmp_path / "runs" / "perplexity-computer-cloud" / "r1"
+    (run / ".records" / "pc-10").mkdir(parents=True)
+    (run / ".records" / "pc-10" / "result.json").write_text(json.dumps({"harness": "perplexity-computer"}))
+    (run / "kw-run.json").write_text(json.dumps({"suite": "portable", "tasks": {"pc-10": {}}}))
+    assert run_eval.app_of_run(run)
+    monkeypatch.setattr(run_eval.sys.stdin, "isatty", lambda: False)  # unattended: no one to confirm it
+    with pytest.raises(run_eval.EvalError, match="quit .* first"):
+        run_eval.regrade(run, tmp_path, "m")
+    (run / ".records" / "pc-10" / "result.json").write_text(json.dumps({"harness": "claude-code"}))
+    assert run_eval.app_of_run(run) is None
