@@ -3,6 +3,14 @@
 Each release's section is published as its GitHub release notes (`tools/release_notes.py`). Every result
 records the version and task fingerprint that produced it (`python tools/evalversion.py`).
 
+## v0.6.3
+
+### New
+
+- **`python tools/keys.py copy-passphrase`** copies the answers passphrase from the credential store to the clipboard (Windows `clip`, macOS `pbcopy`, Linux `wl-copy`/`xclip`/`xsel`) without printing it, with no trailing newline, and clears the clipboard after 60 s (`--clear-after N`, `0` leaves it). It fails with a non-zero exit and a clear message when nothing is stored or there is no clipboard tool; the one-liner it replaces printed only `clip`'s usage message then, which looked like success. It reminds you to paste only at the eval PC's `python -m keyring set ai-pc-evals answers-passphrase` prompt, never into a chat or an agent.
+- **`python tools/keys.py rotate`** re-encrypts the answers under a new passphrase, typed twice at hidden prompts (20 characters or more) or random with `--generate`. It decrypts in memory only, replaces `secrets/answers.enc` only after the new file opens, updates the manifest's bundle hash (its fingerprints don't depend on the passphrase), stores the new passphrase in the credential store, runs `check --deep`, and lists the next steps (commit, release, set it on every eval PC). Any failure before then puts the old bundle, manifest and passphrase back.
+- **`secrets/README.md`** has "Moving it to an eval PC" and "Rotating the passphrase" sections using them.
+
 ## v0.6.2
 
 Fixes from a tester's run of Perplexity Computer, cloud and local, on a PC that had run the evals before: the judge can no longer tell which agent or leg it is scoring, workbook checks understand dates, manual runs record what the app was set to, and the preflight no longer fails a normal machine. Results graded with v0.6.1 are not comparable: the task fingerprint changed (the formula checker and kw-12's key).
