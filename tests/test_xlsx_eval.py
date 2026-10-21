@@ -423,7 +423,7 @@ def test_excel_serial_keeps_the_1900_leap_bug():
 
 
 @pytest.mark.parametrize("formula", ["=VLOOKUP(1, A2:B3, 2)", "=XLOOKUP(1, A2:A3, B2:B3)", "=SUBTOTAL(7, A2:A3)",
-                                     '=DATEDIF(DATE(2026, 1, 1), DATE(2026, 2, 1), "MD")'])
+                                     '=TEXT(DATE(2026, 1, 1), "yyyy")'])
 def test_an_unknown_function_raises_unsupported_function(tmp_path, formula):
     def build(wb, ws):
         ws["A1"] = formula
@@ -440,3 +440,176 @@ def test_iferror_does_not_hide_an_unsupported_function(tmp_path):
 
     with pytest.raises(xlsx_eval.UnsupportedFunction):
         xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1)
+
+
+@pytest.mark.parametrize("text, serial", [
+    ("2026-10-19", 46314.0),
+    ("2026/10/19", 46314.0),
+    ("10/19/2026", 46314.0),
+    ("10-19-2026", 46314.0),
+    ("10/19/26", 46314.0),             # a two-digit year below 30 is 20xx
+    ("1/1/30", 10959.0),               # and from 30 it is 19xx: 1930-01-01
+    ("19-Oct-2026", 46314.0),
+    ("19 October 2026", 46314.0),
+    ("19-oct-26", 46314.0),
+    ("Oct 19, 2026", 46314.0),
+    ("October 19 2026", 46314.0),
+    ("Sept 1, 2026", 46266.0),
+    (" 2026-10-19 18:00 ", 46314.75),
+    ("10/19/2026 6:00 PM", 46314.75),
+    ("19-Oct-2026 06:00:00", 46314.25),
+    ("18:00", 0.75),
+    ("6 pm", 0.75),
+    ("12:00 AM", 0.0),
+    ("2/29/1900", 60.0),               # Excel's own 1900-02-29
+    ("1900-01-01", 1.0),
+])
+def test_text_excel_reads_as_a_date(text, serial):
+    assert xlsx_eval.date_from_text(text) == pytest.approx(serial)
+
+
+@pytest.mark.parametrize("text", ["2026-02-30", "13/19/2026", "2026-10", "Oct 19", "19-Foo-2026", "12", "25:00",
+                                  "13:00 PM", "10/19/2026 18", "1899-12-31", "soon", "", "2026-10-19T18:00"])
+def test_text_excel_does_not_read_as_a_date(text):
+    assert xlsx_eval.date_from_text(text) is None
+
+
+@pytest.mark.parametrize("formula, expected", [
+    ('="2026-10-19"-DATE(2026,1,1)', 291.0),          # date text in arithmetic is its serial
+    ('="10/19/2026"+1', 46315.0),
+    ("=B1-B2", 18.0),                                  # two cells holding dates typed as text
+    ('=YEAR("19-Oct-2026")', 2026.0),
+    ("=MONTH(B1)", 10.0),
+    ('=DAYS(B1, "2026-10-01")', 18.0),
+    ('=NETWORKDAYS("2026-10-01", "Oct 31, 2026")', 22.0),
+    ('=EDATE("1/31/2026", 1)', 46081.0),
+    ('=DATEDIF(B2, B1, "D")', 18.0),
+    ('=DATEVALUE("Oct 19, 2026 18:00")', 46314.0),     # the date part only
+    ("=DATEVALUE(B1)", 46314.0),
+    ('=TIMEVALUE("10/19/2026 6:00 PM")', 0.75),        # the time part only
+    ('=TIMEVALUE("18:00")', 0.75),
+    ('=TIMEVALUE("2026-10-19")', 0.0),
+    ('=VALUE("2026-10-19")', 46314.0),
+    ('=VALUE("$1,500")', 1500.0),
+    ("=VALUE(C1)", 46314.0),                           # a date cell is already a number
+    ("=VALUE(D9)", 0.0),                               # a blank cell is 0
+    ('="2026-10-19">5', True),                         # comparisons don't convert: text is greater than a number
+    ("=B1>DATE(2030,1,1)", True),
+    ("=B1=DATE(2026,10,19)", False),
+    ('=B1="2026-10-19"', True),
+    ("=ISNUMBER(B1)", False),
+    ("=SUM(B1:B2)", 0.0),                              # text in a range is ignored, dates too
+    ("=C1=DATEVALUE(B1)", True),
+    ('=COUNTIF(C1:C3, ">=10/1/2026")', 1.0),           # a date in the criterion; text cells don't count for >=
+    ('=COUNTIF(C1:C3, "10/19/2026")', 1.0),            # = matches the date cell
+    ('=COUNTIF(C1:C3, "2026-10-20")', 1.0),            # and a text cell that reads as the same day
+    ('=COUNTIF(C1:C3, "<>2026-10-20")', 2.0),
+    ('=SUMIFS(D1:D3, C1:C3, ">="&DATE(2026,9,1), C1:C3, "<10/1/2026")', 3.0),
+])
+def test_dates_typed_as_text_read_as_excel_reads_them(tmp_path, formula, expected):
+    import datetime as dt
+
+    def build(wb, ws):
+        ws["A1"] = formula
+        ws["B1"], ws["B2"] = "2026-10-19", "10/1/2026"
+        ws["C1"], ws["C2"], ws["C3"] = dt.date(2026, 10, 19), "2026-10-20", dt.date(2026, 9, 1)
+        ws["D1"], ws["D2"], ws["D3"] = 1, 2, 3
+
+    assert xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("formula, message", [
+    ("=DATEVALUE(46314)", "#VALUE!"),                  # DATEVALUE takes text only
+    ('=DATEVALUE("2026-02-30")', "#VALUE!"),
+    ('=TIMEVALUE("25:00")', "#VALUE!"),
+    ("=VALUE(TRUE)", "#VALUE!"),
+    ('=VALUE("soon")', "arithmetic on non-number"),
+    ('="2026-02-30"+1', "arithmetic on non-number"),
+])
+def test_text_that_is_not_a_date_is_an_excel_error(tmp_path, formula, message):
+    def build(wb, ws):
+        ws["A1"] = formula
+
+    with pytest.raises(xlsx_eval.ExcelError, match=message):
+        xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1)
+
+
+@pytest.mark.parametrize("start, end, unit, expected", [
+    ((2026, 1, 15), (2026, 3, 20), "MD", 5.0),
+    ((2026, 1, 19), (2026, 10, 19), "MD", 0.0),
+    ((2026, 1, 31), (2026, 4, 15), "MD", 15.0),        # from 31 March
+    ((2015, 1, 31), (2015, 3, 1), "MD", -2.0),         # Excel's quirk: DATE(2015, 2, 31) is 3 March
+    ((2016, 1, 31), (2016, 3, 1), "MD", -1.0),         # in a leap year, 2 March
+    ((2026, 1, 30), (2026, 3, 2), "MD", 0.0),
+    ((2026, 10, 19), (2026, 10, 19), "YD", 0.0),
+    ((2015, 1, 1), (2016, 3, 1), "YD", 60.0),          # counted in the end's year, through 29 February 2016
+    ((2024, 10, 19), (2026, 3, 1), "YD", 133.0),       # from 19 October 2025, the year before the end's
+    ((2024, 2, 29), (2026, 3, 1), "yd", 0.0),          # 29 February in 2026 rolls to 1 March
+    ((2024, 2, 29), (2026, 2, 28), "YD", 364.0),
+])
+def test_datedif_md_and_yd_follow_excel(tmp_path, start, end, unit, expected):
+    def build(wb, ws):
+        ws["A1"] = f'=DATEDIF(DATE{start}, DATE{end}, "{unit}")'
+
+    assert xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1) == expected
+
+
+def test_a_1904_workbook_uses_its_epoch(tmp_path):
+    import datetime as dt
+
+    from openpyxl.utils.datetime import CALENDAR_MAC_1904
+
+    def build(wb, ws):
+        wb.epoch = CALENDAR_MAC_1904  # Excel's "Use 1904 date system": serial 0 is 1904-01-01
+        ws["A1"], ws["A2"] = dt.date(2026, 10, 19), dt.date(2026, 12, 1)
+        ws["A3"] = "2026-10-19"
+        ws["B1"] = "=A1-DATE(2026,1,1)"
+        ws["B2"] = "=DATE(2026,10,19)"
+        ws["B3"] = "=A1=DATE(2026,10,19)"
+        ws["B4"] = "=A1+0"
+        ws["B5"] = '=DATEVALUE("2026-10-19")'
+        ws["B6"] = "=A3+0"
+        ws["B7"] = "=DATE(1904,1,1)"
+        ws["B8"] = "=WEEKDAY(DATE(2026,10,19))"
+        ws["B9"] = "=WEEKDAY(0)"
+        ws["B10"] = '=YEAR(A1)&"-"&MONTH(A1)&"-"&DAY(A1)'
+        ws["B11"] = "=EOMONTH(A1,0)"
+        ws["B11"].number_format = "yyyy-mm-dd"
+        ws["B12"] = "=WORKDAY(A1,3)"
+        ws["B12"].number_format = "d-mmm-yy"
+        ws["B13"] = '=COUNTIF(A1:A2,"<"&DATE(2026,11,1))'
+        ws["B14"] = "=NETWORKDAYS(A1,A2)"
+        ws["B15"] = '=DATEDIF(A1,A2,"MD")'
+        ws["B16"] = '="due "&A1'
+        ws["B17"] = "=DATE(1903,12,31)"
+        ws["B18"] = "=YEAR(-1)"
+
+    wb = xlsx_eval.Workbook(book(tmp_path, build))
+    assert wb.date1904 is True
+    got = [wb.value("Data", r, 2) for r in range(1, 17)]
+    assert got == [291.0, 44852.0, True, 44852.0, 44852.0, 44852.0, 0.0, 2.0, 6.0, "2026-10-19",
+                   dt.datetime(2026, 10, 31), dt.datetime(2026, 10, 22), 1.0, 32.0, 12.0, "due 44852"]
+    assert wb.value("Data", 1, 1) == dt.datetime(2026, 10, 19)  # the date cell itself reads as its day
+    for row in (17, 18):  # before 1904-01-01 is #NUM! on this system
+        with pytest.raises(xlsx_eval.ExcelError, match="#NUM!"):
+            wb.value("Data", row, 2)
+
+
+def test_a_1900_workbook_is_not_read_as_1904(tmp_path):
+    def build(wb, ws):
+        ws["A1"] = "=DATE(2026,10,19)"
+
+    wb = xlsx_eval.Workbook(book(tmp_path, build))
+    assert wb.date1904 is False
+    assert wb.value("Data", 1, 1) == 46314.0
+
+
+def test_excel_serial_on_the_1904_system():
+    import datetime as dt
+
+    assert xlsx_eval.excel_serial(dt.date(2026, 10, 19), date1904=True) == 44852.0
+    assert xlsx_eval.excel_serial(dt.date(1904, 1, 1), date1904=True) == 0.0
+    assert xlsx_eval.excel_serial(dt.datetime(1904, 1, 2, 12), date1904=True) == 1.5
+    assert xlsx_eval.excel_serial(dt.time(18), date1904=True) == 0.75
+    assert xlsx_eval.date_from_text("2026-10-19", date1904=True) == 44852.0
+    assert xlsx_eval.date_from_text("1903-12-31", date1904=True) is None

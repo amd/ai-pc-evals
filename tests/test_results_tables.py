@@ -55,7 +55,9 @@ def test_two_tables_cloud_cost_not_run_and_not_graded(tmp_path, capsys):
     assert "| **All** (3) | 2/3 · Q 4.8 · 2m 41s · $0.67 | 0/1 · Q 3.0 · 4m 00s |" in summary
     assert "Not run, **Homey local** (2): dev-gc-injected-note, kw-02-signage-bom." in summary
     assert "| kw-01-multihop-research | medium | ✅ 4.6 · 41s · $0.12 | ❌ 3.0 · 4m 00s |" in tasks
-    assert "| kw-02-signage-bom | hard | — 1m 40s · $0.50 | ⏳ |" in tasks
+    assert "| kw-02-signage-bom † | hard | — 1m 40s · $0.50 | ⏳ |" in tasks  # live web data
+    assert "| Fixed inputs only (2) | 2/2 · Q 4.8 · 30s · $0.17 | 0/1 · Q 3.0 · 4m 00s |" in summary
+    assert "† Live web data (1 tasks, marked per task)" in summary
     assert tasks.index("**Research**") < tasks.index("**Software development**")
 
 
@@ -103,7 +105,7 @@ def test_published_perplexity_scoreboard_still_renders():
     assert "| **All** (16) | 12/16 · Q 4.4 · 52m 48s · $19.78 | 1/1 · Q 4.8 · 3m 57s |" in out
     # docs/RESULTS.md shows excerpts of this output: every rendered line it quotes must still be true
     docs = (REPO / "docs" / "RESULTS.md").read_text(encoding="utf-8")
-    section = docs[docs.index("## Comparing experiments"):docs.index("## Checking results")]
+    section = docs[docs.index("## Comparing experiments"):docs.index("## Comparing how deliverables look")]
     quoted = [ln for ln in section.splitlines() if ln.startswith(("| ", "⚠️", "Experiments:"))]
     assert len(quoted) > 10
     for line in quoted:

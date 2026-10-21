@@ -129,7 +129,7 @@
    "deliverables": [
     "test_tools/determine_rocm_test_dependencies.py"
    ],
-   "max_minutes": 45,
+   "max_minutes": 30,
    "needs": [
     "web"
    ],
