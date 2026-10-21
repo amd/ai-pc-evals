@@ -193,9 +193,16 @@ def xlsx_text(path: Path) -> str:
     pivots = _zip_count(path, "xl/pivotTables/")
     sheets, total_formulas = [], 0
     evaluator: List[Any] = []  # built on first need: most workbooks Excel saved carry cached values
+    try:
+        # The file asks Excel to recalculate on load (xlsxwriter, pandas' engine, saves every result as 0):
+        # its saved results are placeholders, so every formula is computed as Excel will show it.
+        recalc = bool(_xlsx_eval().full_calc_on_load(str(path)))
+    except Exception:  # pylint: disable=broad-exception-caught  # noqa: BLE001
+        recalc = False
 
     def computed(sheet: str, r: int, c: int) -> str:
-        """What Excel would display for a formula saved without a cached value (openpyxl writes none)."""
+        """What Excel would display for a formula saved without a trustworthy cached value (openpyxl writes
+        none, xlsxwriter a placeholder 0)."""
         if not evaluator:
             try:
                 evaluator.append(_xlsx_eval().Workbook(str(path)))
@@ -245,8 +252,8 @@ def xlsx_text(path: Path) -> str:
                 value = cell.value
                 if cell.data_type == "f":
                     cached = values.cell(row=r, column=c).value
-                    shown = computed(ws.title, r, c) if cached is None else cached
-                    value = f"{value} -> {shown}"
+                    shown = computed(ws.title, r, c) if cached is None or recalc else cached
+                    value = f"{getattr(value, 'text', value)} -> {shown}"  # an array formula's text
                 text = "" if value is None else str(value)
                 if text and c in hidden_cols:
                     text = f"[hidden] {text}"
