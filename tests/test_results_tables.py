@@ -55,7 +55,9 @@ def test_two_tables_cloud_cost_not_run_and_not_graded(tmp_path, capsys):
     assert "| **All** (3) | 2/3 · Q 4.8 · 2m 41s · $0.67 | 0/1 · Q 3.0 · 4m 00s |" in summary
     assert "Not run, **Homey local** (2): dev-gc-injected-note, kw-02-signage-bom." in summary
     assert "| kw-01-multihop-research | medium | ✅ 4.6 · 41s · $0.12 | ❌ 3.0 · 4m 00s |" in tasks
-    assert "| kw-02-signage-bom | hard | — 1m 40s · $0.50 | ⏳ |" in tasks
+    assert "| kw-02-signage-bom † | hard | — 1m 40s · $0.50 | ⏳ |" in tasks  # live web data
+    assert "| Fixed inputs only (2) | 2/2 · Q 4.8 · 30s · $0.17 | 0/1 · Q 3.0 · 4m 00s |" in summary
+    assert "† Live web data (1 tasks, marked per task)" in summary
     assert tasks.index("**Research**") < tasks.index("**Software development**")
 
 
