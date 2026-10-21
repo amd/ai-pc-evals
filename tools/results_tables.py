@@ -184,7 +184,8 @@ def from_scoreboard(path: Path) -> List[dict]:
                     "cloud": bool(cloud), "tasks": tasks, "not_run": list((a.get("summary") or {}).get("not_run", [])),
                     "eval": _eval(a["eval"] if "eval" in a else board.get("eval")),
                     "agent_version": a.get("agent_version", board.get("agent_version")),
-                    "isolation": a.get("isolation")})
+                    "isolation": a.get("isolation"), "ran": a.get("ran"),
+                    "judge_same_family": a.get("judge_same_family")})
     return out
 
 
@@ -231,6 +232,8 @@ def from_graded(arg: str) -> dict:
                                                    if t not in tasks)}),
             "not_run_known": found, "eval": _eval(version), "isolation": _isolation(modes),
             "agent_version": None, "source": str(card_path.parent), "judge_same_family": card.get("judge_same_family"),
+            # The day the run was prepared, not graded: a regrade rewrites the scorecard, not when the agent ran.
+            "ran": str(card.get("prepared_at") or "")[:10] or None,
             "key": f"{card_path.parent.parent.name}/{card_path.parent.name}", "visual_ab": visual,
             "date": datetime.date.fromtimestamp(card_path.stat().st_mtime).isoformat()}
 
@@ -277,6 +280,7 @@ def scoreboard(exps: List[dict], machine: Optional[str] = None, agent_version: O
                "complete": (e.get("not_run_known", True) and not e["not_run"]
                             and not any(t.get("note") == "not recorded" for t in e["tasks"].values())),
                "agent_version": agent_version, "source": e["source"], "isolation": e.get("isolation"),
+               "ran": e.get("ran"), "judge_same_family": e.get("judge_same_family"),
                "summary": summary(e),
                "tasks": {tid: {k: v for k, v in t.items() if k != "cost_usd" or e["cloud"]}
                          for tid, t in e["tasks"].items()}}
@@ -396,7 +400,7 @@ def render(exps: List[dict]) -> str:
             + (" · cost (cloud experiments only)" if any(e["cloud"] for e in exps) else "")
             + "; ≥ marks a total over tasks some of whose values are unknown."]
     if len(fixed) < len(kw):
-        dates = sorted({e.get("date") for e in exps if e.get("date")})
+        dates = sorted({e["ran"] for e in exps if e.get("ran")})
         out.append(f"{LIVE_MARK} Live web data ({len(kw) - len(fixed)} tasks, marked per task): the right answer "
                    "depends on the day and the agent's web access, so compare them only between experiments run on "
                    "the same days" + (f" (these ran {', '.join(dates)})" if len(exps) > 1 and dates else "")
