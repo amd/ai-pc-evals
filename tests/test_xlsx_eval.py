@@ -57,7 +57,7 @@ def test_round_half_away_from_zero(tmp_path):
 
 
 @pytest.mark.parametrize("formula, message", [
-    ("=VLOOKUP(1, A1:B2, 2)", "unsupported function VLOOKUP"),
+    ("=OFFSET(B2, 1, 0)", "unsupported function OFFSET"),
     ("={1,2}", "unsupported syntax"),
     ("=1/0", "division by zero"),
     ("=A1", "circular reference"),
@@ -366,6 +366,8 @@ def test_today_prefers_the_value_excel_cached(tmp_path):
             if item.filename == "xl/worksheets/sheet1.xml":
                 data = data.replace(b"<f>TODAY()</f><v></v>", b"<f>TODAY()</f><v>46000</v>")
                 assert b"<v>46000</v>" in data
+            if item.filename == "xl/workbook.xml":  # Excel saves no request to recalculate on load
+                data = data.replace(b' fullCalcOnLoad="1"', b"")
             zout.writestr(item, data)
     assert xlsx_eval.Workbook(cached).value("Data", 1, 1) == 46000
 
@@ -422,7 +424,7 @@ def test_excel_serial_keeps_the_1900_leap_bug():
     assert xlsx_eval.excel_serial(dt.timedelta(hours=36)) == 1.5
 
 
-@pytest.mark.parametrize("formula", ["=VLOOKUP(1, A2:B3, 2)", "=XLOOKUP(1, A2:A3, B2:B3)", "=SUBTOTAL(7, A2:A3)",
+@pytest.mark.parametrize("formula", ["=OFFSET(A2, 1, 0)", '=_xlfn.TEXTJOIN(",", TRUE, A2:A3)', "=SUBTOTAL(7, A2:A3)",
                                      '=TEXT(DATE(2026, 1, 1), "yyyy")'])
 def test_an_unknown_function_raises_unsupported_function(tmp_path, formula):
     def build(wb, ws):
@@ -436,7 +438,7 @@ def test_an_unknown_function_raises_unsupported_function(tmp_path, formula):
 
 def test_iferror_does_not_hide_an_unsupported_function(tmp_path):
     def build(wb, ws):
-        ws["A1"] = '=IFERROR(VLOOKUP(1, A2:B3, 2), "none")'
+        ws["A1"] = '=IFERROR(OFFSET(A2, 1, 0), "none")'
 
     with pytest.raises(xlsx_eval.UnsupportedFunction):
         xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 1)
@@ -613,3 +615,229 @@ def test_excel_serial_on_the_1904_system():
     assert xlsx_eval.excel_serial(dt.time(18), date1904=True) == 0.75
     assert xlsx_eval.date_from_text("2026-10-19", date1904=True) == 44852.0
     assert xlsx_eval.date_from_text("1903-12-31", date1904=True) is None
+
+
+def test_a_workbook_with_placeholder_results_is_recalculated(tmp_path):
+    # xlsxwriter (pandas' engine) saves every formula's result as 0 and asks Excel to recalculate on load.
+    xlsxwriter = pytest.importorskip("xlsxwriter")
+    path = tmp_path / "written.xlsx"
+    wb = xlsxwriter.Workbook(str(path), {"use_future_functions": True})
+    ws = wb.add_worksheet("Data")
+    ws.write_row(0, 0, ["item", "amount"])
+    ws.write_row(1, 0, ["a", 120])
+    ws.write_row(2, 0, ["b", 845.5])
+    ws.write_formula("B4", "=SUM(B2:B3)")
+    ws.write_formula("B5", '=XLOOKUP("b", A2:A3, B2:B3)')  # saved as a dynamic-array formula
+    ws.write_formula("B6", '=IFS(B4>900, "high", TRUE, "low")')  # saved as _xlfn.IFS
+    wb.close()
+    assert xlsx_eval.full_calc_on_load(path)
+    assert openpyxl.load_workbook(path, data_only=True)["Data"]["B4"].value == 0  # the placeholder
+    book_ = xlsx_eval.Workbook(path)
+    assert book_.full_calc
+    assert [book_.value("Data", r, 2) for r in (4, 5, 6)] == [965.5, 845.5, "high"]
+    import io
+
+    stream = io.BytesIO(path.read_bytes())
+    assert xlsx_eval.full_calc_on_load(stream) and stream.tell() == 0
+
+
+def test_a_pandas_workbook_is_recalculated(tmp_path):
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("xlsxwriter")
+    path = tmp_path / "df.xlsx"
+    pd.DataFrame({"qty": [2, 3, None], "total": ["=A2*10", "=A3*10", "=SUM(B2:B3)"]}).to_excel(
+        path, index=False, engine="xlsxwriter")
+    wb = xlsx_eval.Workbook(path)
+    assert [wb.value("Sheet1", r, 2) for r in (2, 3, 4)] == [20.0, 30.0, 50.0]
+
+
+def test_a_workbook_without_the_flag_keeps_its_saved_results(tmp_path):
+    import zipfile
+
+    src = book(tmp_path, lambda wb, ws: ws.__setitem__("A1", "=1+1"))
+    assert xlsx_eval.full_calc_on_load(src)  # openpyxl sets it too (and saves no results)
+    excel = tmp_path / "excel.xlsx"
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(excel, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "xl/workbook.xml":
+                data = data.replace(b' fullCalcOnLoad="1"', b"")
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = data.replace(b"<f>1+1</f><v></v>", b"<f>1+1</f><v>7</v>")
+            zout.writestr(item, data)
+    assert not xlsx_eval.full_calc_on_load(excel)
+    assert xlsx_eval.Workbook(excel).value("Data", 1, 1) == 7  # what Excel saved, and showed
+    assert not xlsx_eval.full_calc_on_load(tmp_path / "missing.xlsx")
+
+
+def array_book(tmp_path, formula):
+    def build(wb, ws):
+        for r, (a, b) in enumerate(((5, "x"), (-2, "y"), (3, "x")), start=1):
+            ws.cell(row=r, column=1, value=a)
+            ws.cell(row=r, column=2, value=b)
+        ws["C1"], ws["D1"] = 10, 1
+        ws["Z1"] = formula
+
+    return xlsx_eval.Workbook(book(tmp_path, build))
+
+
+@pytest.mark.parametrize("formula, expected", [
+    ("=SUMPRODUCT((A1:A3>0)*A1:A3)", 8.0),
+    ('=SUMPRODUCT(--(B1:B3="x"), A1:A3)', 8.0),
+    ('=SUMPRODUCT((A1:A3>0)*(B1:B3="X"))', 2.0),
+    ("=SUMPRODUCT(A1:A3>0)", 0.0),  # logicals in an array count as 0, as in Excel
+    ("=SUMPRODUCT((A1:A3>0)*C1:D1)", 22.0),  # a column times a row: every pair
+    ("=SUMPRODUCT(A1:A3*2)", 12.0),
+    ("=SUMPRODUCT(A1:A3^2)", 38.0),
+    ("=SUMPRODUCT(-A1:A3)", -6.0),
+    ('=SUMPRODUCT((B1:B3&"!"="x!")*1)', 2.0),
+    ('=XLOOKUP(1, (B1:B3="x")*(A1:A3<4), A1:A3)', 3.0),
+    ("=INDEX((A1:A3>0)*A1:A3, 2)", 0.0),
+])
+def test_arrays_work_element_by_element_where_an_argument_takes_an_array(tmp_path, formula, expected):
+    assert array_book(tmp_path, formula).value("Data", 1, 26) == expected
+
+
+@pytest.mark.parametrize("formula, error, message", [
+    ("=SUM(A1:A3>0)", xlsx_eval.FormulaError, "range is only valid"),
+    ("=A1:A3>0", xlsx_eval.FormulaError, "range is only valid"),
+    ("=IF(A1:A3>0, 1, 0)", xlsx_eval.FormulaError, "range is only valid"),
+    ("=SUMPRODUCT(A1:A3*A1:A2)", xlsx_eval.NotAvailable, "different sizes"),
+    ("=SUMPRODUCT(A1:A3, C1:D1)", xlsx_eval.ExcelError, "differ in size"),
+    ("=SUMPRODUCT(B1:B3*1)", xlsx_eval.ExcelError, "arithmetic on non-number"),
+])
+def test_ranges_in_operators_elsewhere_are_formula_errors_not_crashes(tmp_path, formula, error, message):
+    with pytest.raises(error, match=message):
+        array_book(tmp_path, formula).value("Data", 1, 26)
+
+
+def lookup_book(tmp_path, formula):
+    def build(wb, ws):
+        rows = [("Region", "Code", "Amount"), ("East", 10, 100), ("west", 20, 200), ("North*", 30, 300),
+                ("South", 40, 400)]
+        for r, row in enumerate(rows, start=1):
+            for c, v in enumerate(row, start=1):
+                ws.cell(row=r, column=c, value=v)
+        for r, (lo, grade, desc, dup) in enumerate(((0, "F", 400, "x"), (50, "C", 300, "y"), (100, "B", 200, "x"),
+                                                    (200, "A", 100, "y")), start=2):
+            ws.cell(row=r, column=5, value=lo)
+            ws.cell(row=r, column=6, value=grade)
+            ws.cell(row=r, column=7, value=desc)
+            ws.cell(row=r, column=12, value=dup)
+        for c, (n, s) in enumerate(((1, "a"), (2, "b"), (3, "c"), (4, "d")), start=8):
+            ws.cell(row=1, column=c, value=n)
+            ws.cell(row=2, column=c, value=s)
+        ws["Z1"] = formula
+
+    return xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 26)
+
+
+@pytest.mark.parametrize("formula, expected", [
+    ('=VLOOKUP("WEST", A2:C5, 3, FALSE)', 200),  # exact text matches ignore case
+    ('=VLOOKUP("we*", A2:C5, 2, FALSE)', 20),     # and take wildcards
+    ('=VLOOKUP("North~*", A2:C5, 3, FALSE)', 300),
+    ("=VLOOKUP(20, B2:C5, 2, )", 200),            # an empty range_lookup is FALSE
+    ("=VLOOKUP(75, E2:F5, 2)", "C"),              # approximate: the largest value <= 75
+    ("=VLOOKUP(75, E2:F5, 2, TRUE)", "C"),
+    ("=VLOOKUP(250, E2:F5, 2)", "A"),
+    ("=HLOOKUP(3, H1:K2, 2, FALSE)", "c"),
+    ("=HLOOKUP(2.5, H1:K2, 2)", "b"),
+    ("=INDEX(C2:C5, 3)", 300),
+    ("=INDEX(A2:C5, 2, 3)", 200),
+    ("=INDEX(H2:K2, 4)", "d"),
+    ("=SUM(INDEX(A2:C5, 0, 3))", 1000.0),
+    ('=INDEX(C2:C5, MATCH("south", A2:A5, 0))', 400),
+    ("=MATCH(25, B2:B5, 1)", 2.0),
+    ("=MATCH(25, B2:B5)", 2.0),
+    ("=MATCH(30, B2:B5, 0)", 3.0),
+    ("=MATCH(250, G2:G5, -1)", 2.0),              # descending: the smallest value >= 250
+    ('=XLOOKUP("south", A2:A5, C2:C5)', 400),
+    ('=_xlfn.XLOOKUP("nope", A2:A5, C2:C5, "none")', "none"),
+    ("=XLOOKUP(25, B2:B5, C2:C5, , -1)", 200),    # exact or next smaller
+    ("=XLOOKUP(25, B2:B5, C2:C5, , 1)", 300),     # exact or next larger
+    ('=XLOOKUP("*th", A2:A5, B2:B5, , 2)', 40),   # wildcards only in match_mode 2
+    ('=IFNA(XLOOKUP("*th", A2:A5, B2:B5), "no")', "no"),
+    ('=XLOOKUP("x", L2:L5, G2:G5)', 400),         # the first match
+    ('=XLOOKUP("x", L2:L5, G2:G5, , 0, -1)', 200),  # searching from the last
+    ("=SUM(XLOOKUP(20, B2:B5, A2:C5))", 220.0),  # a whole row returned
+    ('=_xlfn.IFS(B2>5, "big", TRUE, "small")', "big"),
+    ('=_xlfn._xlws.SUMPRODUCT(--(A2:A5="east"))', 1.0),
+    ('=IFNA(VLOOKUP("zz", A2:C5, 2, FALSE), 0)', 0),
+    ('=IFNA(VLOOKUP("10", B2:C5, 2, FALSE), "type")', "type"),  # text "10" doesn't match the number 10
+    ('=ISNA(MATCH("zz", A2:A5, 0))', True),
+    ("=ISNA(1/0)", False),
+    ('=IFERROR(INDEX(C2:C5, 9), "ref")', "ref"),
+    ('=IFERROR(VLOOKUP("zz", A2:C5, 2, FALSE), "-")', "-"),
+])
+def test_lookup_functions_follow_excel(tmp_path, formula, expected):
+    assert lookup_book(tmp_path, formula) == expected
+
+
+@pytest.mark.parametrize("formula, error, message", [
+    ('=VLOOKUP("zz", A2:C5, 2, FALSE)', xlsx_eval.NotAvailable, "#N/A"),
+    ("=VLOOKUP(-5, E2:F5, 2)", xlsx_eval.NotAvailable, "#N/A"),
+    ('=VLOOKUP("East", A2:C5, 4, FALSE)', xlsx_eval.ExcelError, "#REF!"),
+    ('=VLOOKUP("East", A2:C5, 0, FALSE)', xlsx_eval.ExcelError, "#VALUE!"),
+    ("=MATCH(1, A2:C5, 0)", xlsx_eval.NotAvailable, "one row or column"),
+    ("=INDEX(C2:C5, 5)", xlsx_eval.ExcelError, "#REF!"),
+    ("=XLOOKUP(1, A2:A5, C2:C4)", xlsx_eval.ExcelError, "differ in size"),
+    ("=XLOOKUP(1, A2:A5, C2:C5, 0, 0, 2)", xlsx_eval.UnsupportedFunction, "binary"),
+    ("=IFNA(1/0, 0)", xlsx_eval.ExcelError, "division by zero"),  # IFNA catches #N/A only
+    ("=SUM(1, )", xlsx_eval.FormulaError, "empty argument"),
+])
+def test_lookup_errors_are_excel_errors(tmp_path, formula, error, message):
+    with pytest.raises(error, match=message):
+        lookup_book(tmp_path, formula)
+    assert issubclass(xlsx_eval.NotAvailable, xlsx_eval.ExcelError)
+
+
+@pytest.mark.parametrize("formula, expected", [
+    ('=""&(0.1+0.2)', "0.3"),
+    ('=""&1E+20', "1E+20"),
+    ('="n"&5', "n5"),
+    ('=""&1/3', "0.333333333333333"),
+    ('=""&-2.5', "-2.5"),
+    ('=""&123456789012345678', "1.23456789012346E+17"),
+    ('=""&123456789012345', "123456789012345"),
+    ('=""&0.00000015', "1.5E-07"),
+    ('=""&(1-1)', "0"),
+])
+def test_numbers_join_as_excels_general_format(tmp_path, formula, expected):
+    assert array_book(tmp_path, formula).value("Data", 1, 26) == expected
+
+
+def criteria_book(tmp_path, formula):
+    def build(wb, ws):
+        for r, v in enumerate((100, "1x", "abc", "a[b]c", "a*c", True, None, "b", 1), start=1):
+            ws.cell(row=r, column=1, value=v)
+            ws.cell(row=r, column=2, value=r)
+        ws["Z1"] = formula
+
+    return xlsx_eval.Workbook(book(tmp_path, build)).value("Data", 1, 26)
+
+
+@pytest.mark.parametrize("formula, expected", [
+    ('=COUNTIF(A1:A9, "1*")', 1.0),       # wildcards match text cells only, not the numbers 100 and 1
+    ('=COUNTIF(A1:A9, "a?c")', 2.0),      # abc and a*c
+    ('=COUNTIF(A1:A9, "a[b]c")', 1.0),    # brackets are literal
+    ('=COUNTIF(A1:A9, "a~*c")', 1.0),     # ~* is a literal star
+    ('=COUNTIF(A1:A9, "<b")', 4.0),       # text below "b": text cells only
+    ('=COUNTIF(A1:A9, ">=b")', 1.0),
+    ("=COUNTIF(A1:A9, TRUE)", 1.0),
+    ('=COUNTIF(A1:A9, "TRUE")', 1.0),
+    ("=COUNTIF(A1:A9, 1)", 1.0),          # TRUE is not 1
+    ('=COUNTIF(A1:A9, "<>abc")', 8.0),    # blanks and numbers aren't "abc"
+    ('=COUNTIF(A1:A9, "")', 1.0),
+    ('=COUNTIF(A1:A9, "<>")', 8.0),
+    ('=COUNTIF(A1:A9, ">50")', 1.0),
+    ('=SUMIF(A1:A9, "a*", B1)', 12.0),    # a one-cell sum range is read as B1:B9
+    ('=SUMIF(A1:A9, "a*", B1:B2)', 12.0),
+    ('=AVERAGEIF(A1:A9, "a*", B1)', 4.0),
+    ("=A6=1", False),                      # a logical never equals a number
+    ("=A6>9", True),                       # Excel orders numbers < text < logicals
+    ('=A6>"zzz"', True),
+    ("=A6=TRUE", True),
+    ("=A7=FALSE", True),                   # a blank is the other side's empty value
+])
+def test_criteria_and_comparisons_follow_excel(tmp_path, formula, expected):
+    assert criteria_book(tmp_path, formula) == expected
