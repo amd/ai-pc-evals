@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence
 
 KW = Path(__file__).resolve().parent
 PUBLIC_FILE = KW / "tasks.public.json"
@@ -46,8 +46,9 @@ def without_canaries(data: dict) -> dict:
 
 class Suite:
     def __init__(self, name: str, prefix: str, tasks: Callable[[Optional[dict]], list],
-                 notes: Callable[[], Dict[Path, str]]):
+                 notes: Callable[[], Dict[Path, str]], replaces: Sequence[str] = ()):
         self.name, self.prefix, self.tasks, self.notes = name, prefix, tasks, notes
+        self.replaces = tuple(replaces)  # earlier names of this suite, dropped from the task file
 
     def render(self, current: dict) -> dict:
         judge = {t["id"]: t for t in current["tasks"] if all(k in t for k in JUDGE)}
@@ -58,7 +59,8 @@ class Suite:
         new = self.tasks(judge)
         ids = [t["id"] for t in new]
         data = dict(current)
-        data["suites"] = {**{k: v for k, v in current["suites"].items() if k != self.name}, self.name: ids}
+        data["suites"] = {**{k: v for k, v in current["suites"].items() if k != self.name and k not in self.replaces},
+                          self.name: ids}
         data["tasks"] = ordered([t for t in current["tasks"]
                                  if t["id"] not in ids and not t["id"].startswith(self.prefix)] + new)
         return data
