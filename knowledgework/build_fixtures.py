@@ -2395,7 +2395,7 @@ def copy_pack_files(pack: str, out: Path, files: Dict[str, str]) -> None:
     src = snapshot(pack)
     for dest, name in files.items():
         if not (src / name).is_file():
-            raise SystemExit(f"ERROR: snapshot pack {pack} has no {name}; for Reddit, import the thread's .json")
+            raise SystemExit(f"ERROR: snapshot pack {pack} has no {name}; import it (python tools/snapshot_sources.py import {pack} <id> <file>)")
         (out / dest).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src / name, out / dest)
 

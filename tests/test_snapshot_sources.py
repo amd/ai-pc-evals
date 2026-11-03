@@ -1,39 +1,9 @@
 """snapshot_sources.py offline: captures are faked; manifest, lock, verify and bundles are real."""
 import json
-import pathlib
 
 import pytest
 
 import snapshot_sources as ss
-
-THREAD = [
-    {"data": {"children": [{"kind": "t3", "data": {
-        "title": "Strix Halo ROCm notes", "subreddit": "LocalLLaMA", "author": "op_user",
-        "created_utc": 1778000000, "score": 120, "num_comments": 3,
-        "selftext": "Prefill 450 tok/s, decode 38 tok/s on Q4_K_M with MTP."}}]}},
-    {"data": {"children": [
-        {"kind": "t1", "data": {"author": "commenter1", "created_utc": 1778003600, "score": 15,
-                                "body": "Vulkan was faster for me.", "replies": {"data": {"children": [
-                                    {"kind": "t1", "data": {"author": "op_user", "is_submitter": True,
-                                                            "created_utc": 1778007200, "score": 4,
-                                                            "body": "Which driver?", "replies": ""}},
-                                    {"kind": "more", "data": {"count": 2}}]}}}},
-        {"kind": "t1", "data": {"author": "[deleted]", "created_utc": None, "score": 1, "body": "[removed]",
-                                "replies": ""}},
-    ]}},
-]
-
-
-def test_reddit_markdown_keeps_post_and_comments_apart_and_counts_missing_replies():
-    md = ss.reddit_markdown(THREAD, "https://www.reddit.com/r/LocalLLaMA/comments/x/")
-    assert md.startswith("# Strix Halo ROCm notes")
-    post, comments = md.split("## Comments")
-    assert "Prefill 450 tok/s, decode 38 tok/s" in post and "u/op_user" in post
-    assert "Vulkan was faster" in comments and "Vulkan" not in post
-    assert "**u/op_user (original poster)**" in comments  # an OP reply is marked as such
-    assert "[2 more replies not loaded in this snapshot]" in comments
-    assert "date not shown" in comments  # a missing date is never guessed
-    assert "2026-05-05" in post
 
 
 def write_packs(tmp_path, sources):
@@ -82,6 +52,18 @@ def test_bad_pack_definitions_are_rejected(tmp_path):
         ss.pack_sources("P", write_packs(tmp_path, [{"id": "P1", "url": "https://a", "kind": "page"}] * 2))
     with pytest.raises(ss.SnapshotError, match="no pack"):
         ss.pack_sources("Q", write_packs(tmp_path, []))
+    with pytest.raises(ss.SnapshotError, match="bad source"):  # the removed Reddit API mode
+        ss.pack_sources("P", write_packs(tmp_path, [{"id": "R1", "url": "https://www.reddit.com/r/x/", "kind": "reddit"}]))
+
+
+def test_sites_whose_terms_forbid_automation_are_never_fetched(tmp_path):
+    for url in ("https://www.reddit.com/r/x/comments/1/t/", "https://old.reddit.com/r/x/", "https://x.com/amd/status/1",
+                "https://www.linkedin.com/posts/x", "https://www.perplexity.ai/hub/blog/x"):
+        for kind in ("page", "file"):
+            with pytest.raises(ss.SnapshotError, match="forbid automated access"):
+                ss.pack_sources("P", write_packs(tmp_path, [{"id": "P1", "url": url, "kind": kind}]))
+        assert ss.pack_sources("P", write_packs(tmp_path, [{"id": "P1", "url": url, "kind": "manual"}]))
+    assert not ss.no_automation("https://www.box.com/x") and not ss.no_automation("https://www.bls.gov/x")
 
 
 def test_verify_without_a_lock_says_what_to_do(tmp_path):
@@ -101,26 +83,11 @@ def test_bundle_installs_on_another_machine_and_verifies(tmp_path, monkeypatch):
         ss.install_zip(tmp_path / "P.zip", there)
 
 
-def test_reddit_falls_back_to_the_old_reddit_page_when_json_is_blocked(tmp_path, monkeypatch):
-    seen = []
-
-    def blocked(url):
-        raise OSError("HTTP Error 403: Blocked")
+def test_blocked_and_manual_sources_are_listed_for_a_manual_save_then_imported(tmp_path, monkeypatch):
+    fetched = []
 
     def page(src, dest):
-        seen.append(src["url"])
-        p = dest / f"{src['id']}.pdf"
-        p.write_bytes(b"pdf")
-        return [p]
-    monkeypatch.setattr(ss, "http_get", blocked)
-    monkeypatch.setattr(ss, "capture_page", page)
-    out = ss.capture_reddit({"id": "R1", "url": "https://www.reddit.com/r/LocalLLM/comments/abc/x/"}, tmp_path)
-    assert seen == ["https://old.reddit.com/r/LocalLLM/comments/abc/x/"]
-    assert out[0].name == "R1.pdf"
-
-
-def test_blocked_sources_are_listed_for_a_manual_save_then_imported(tmp_path, monkeypatch):
-    def page(src, dest):
+        fetched.append(src["id"])
         if "amd.com" in src["url"]:
             raise ss.SnapshotError("the site refused the automated browser")
         p = dest / f"{src['id']}.pdf"
@@ -128,17 +95,20 @@ def test_blocked_sources_are_listed_for_a_manual_save_then_imported(tmp_path, mo
         return [p]
     monkeypatch.setitem(ss.CAPTURE, "page", page)
     packs = write_packs(tmp_path, [{"id": "P1", "url": "https://www.amd.com/halo", "kind": "page"},
-                                   {"id": "P3", "url": "https://www.perplexity.ai/hub/x", "kind": "page"}])
+                                   {"id": "P2", "url": "https://www.bls.gov/release", "kind": "page"},
+                                   {"id": "P3", "url": "https://www.perplexity.ai/hub/x", "kind": "manual"}])
     root, lock = tmp_path / "snap", tmp_path / "lock.json"
     manifest, manual = ss.capture("P", root, packs)
-    assert manual == ["P1"]
-    with pytest.raises(ss.SnapshotError, match=r"missing \['P1'\]"):
+    assert manual == ["P1", "P3"] and fetched == ["P1", "P2"]  # a manual source is never fetched
+    with pytest.raises(ss.SnapshotError, match="missing"):
         ss.lock("P", root, lock, packs)
     saved = tmp_path / "Ryzen AI Halo - AMD.pdf"
     saved.write_bytes(b"%PDF saved by hand")
     ss.import_manual("P", "P1", saved, root, packs)
+    ss.import_manual("P", "P3", saved, root, packs)
     entries = json.loads(manifest.read_text())["files"]
-    assert [(e["id"], e["file"], e["how"]) for e in entries] == [("P1", "P1.pdf", "manual"), ("P3", "P3.pdf", "page")]
+    assert [(e["id"], e["file"], e["how"]) for e in entries] == [
+        ("P1", "P1.pdf", "manual"), ("P2", "P2.pdf", "page"), ("P3", "P3.pdf", "manual")]
     assert entries[0]["url"] == "https://www.amd.com/halo"
     with pytest.raises(ss.SnapshotError, match="saved once"):
         ss.import_manual("P", "P1", saved, root, packs)
@@ -146,25 +116,6 @@ def test_blocked_sources_are_listed_for_a_manual_save_then_imported(tmp_path, mo
         ss.import_manual("P", "P9", saved, root, packs)
     ss.lock("P", root, lock, packs)
     assert ss.verify("P", root, lock) == []
-
-
-def test_a_reddit_json_saved_in_a_browser_imports_as_markdown(tmp_path):
-    packs = tmp_path / "packs.json"
-    packs.write_text(json.dumps({"R": [{"id": "R1", "url": "https://www.reddit.com/r/x/comments/1/t/",
-                                        "kind": "reddit"}]}), encoding="utf-8")
-    saved = tmp_path / "thread.json"
-    saved.write_text(json.dumps(THREAD), encoding="utf-8")
-    manifest = ss.import_manual("R", "R1", saved, tmp_path / "snap", packs)
-    files = [e["file"] for e in json.loads(manifest.read_text())["files"]]
-    assert files == ["R1.md", "R1.json"]
-    assert "[2 more replies not loaded in this snapshot]" in (tmp_path / "snap" / "R" / "R1.md").read_text("utf-8")
-    bad = tmp_path / "login.json"
-    bad.write_text('{"error": 403}', encoding="utf-8")
-    packs.write_text(json.dumps({"R": [{"id": "R2", "url": "https://www.reddit.com/r/x/comments/2/t/",
-                                        "kind": "reddit"}]}), encoding="utf-8")
-    with pytest.raises(ss.SnapshotError, match="not a Reddit thread"):
-        ss.import_manual("R", "R2", bad, tmp_path / "snap", packs)
-    assert not (tmp_path / "snap" / "R" / "R2.json").exists()
 
 
 def test_chrome_runs_on_a_throwaway_profile(monkeypatch):
@@ -180,12 +131,11 @@ def test_chrome_runs_on_a_throwaway_profile(monkeypatch):
 
 
 def test_a_bot_check_page_is_never_saved_as_the_source(monkeypatch, tmp_path):
-    cloudflare = ("<html><body>www.perplexity.ai Performing security verification This website uses a "
+    cloudflare = ("<html><body>www.example.com Performing security verification This website uses a "
                   "security service to protect against malicious bots.</body></html>")
     monkeypatch.setattr(ss, "chrome", lambda *a: ss.subprocess.CompletedProcess(a, 0, cloudflare, ""))
-    monkeypatch.setattr(ss, "http_get", lambda url: cloudflare.encode())  # the plain download is challenged too
     with pytest.raises(ss.SnapshotError, match="bot check"):
-        ss.capture_page({"id": "P3", "url": "https://www.perplexity.ai/hub/blog/x"}, tmp_path)
+        ss.capture_page({"id": "P3", "url": "https://www.example.com/blog/x"}, tmp_path)
     assert list(tmp_path.iterdir()) == []
     assert ss.challenge_page("<h1>AMD AI Playbooks</h1><p>Start building</p>") is None
 
@@ -198,34 +148,13 @@ def test_a_refused_page_load_is_an_error_not_a_blank_snapshot(monkeypatch):
         ss.chrome("--dump-dom", "https://www.amd.com/")
 
 
-ARTICLE = "<html><title>Portable Computer comes to AMD</title><body>" + "<p>Real article text. </p>" * 200 + "</body></html>"
-
-
 def test_an_empty_shell_is_not_a_snapshot(monkeypatch, tmp_path):
-    # Reddit serves scripts a near-empty page titled 'Reddit': no bot-check wording, no content.
-    shell = "<html><title>Reddit</title><body><script>app()</script>Reddit</body></html>"
+    # Some sites serve scripts a near-empty app shell: no bot-check wording, no content.
+    shell = "<html><title>Forum</title><body><script>app()</script>Forum</body></html>"
     monkeypatch.setattr(ss, "chrome", lambda *a: ss.subprocess.CompletedProcess(a, 0, shell, ""))
-    monkeypatch.setattr(ss, "http_get", lambda url: shell.encode())
     with pytest.raises(ss.SnapshotError, match="no readable content"):
-        ss.capture_page({"id": "R1", "url": "https://www.reddit.com/r/x/comments/1/t/"}, tmp_path)
+        ss.capture_page({"id": "R1", "url": "https://forum.example.com/t/1"}, tmp_path)
     assert list(tmp_path.iterdir()) == []
-
-
-def test_a_page_refused_to_the_browser_but_served_to_a_plain_client_is_printed_from_the_saved_copy(monkeypatch, tmp_path):
-    printed = []
-
-    def chrome(*args):
-        if "--dump-dom" in args:
-            raise ss.SnapshotError("the site refused the automated browser")
-        pdf = next(a for a in args if a.startswith("--print-to-pdf="))[len("--print-to-pdf="):]
-        printed.append(args[-1])
-        pathlib.Path(pdf).write_bytes(b"%PDF" + b"x" * 2000)
-        return ss.subprocess.CompletedProcess(args, 0, "", "")
-    monkeypatch.setattr(ss, "chrome", chrome)
-    monkeypatch.setattr(ss, "http_get", lambda url: ARTICLE.encode())
-    files = ss.capture_page({"id": "P3", "url": "https://www.perplexity.ai/hub/blog/x"}, tmp_path)
-    assert [f.name for f in files] == ["P3.pdf", "P3.html"]
-    assert printed == [(tmp_path / "P3.html").resolve().as_uri()]  # the saved copy, not the live site
 
 
 def test_retry_fetches_only_what_is_missing(tmp_path, monkeypatch):

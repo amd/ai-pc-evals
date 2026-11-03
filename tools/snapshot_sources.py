@@ -9,12 +9,14 @@ usage:
   python tools/snapshot_sources.py unzip <in.zip>              # install a bundle there, then verify it
 
 Packs are defined in knowledgework/portable/packs.json: {"<pack>": [{"id", "url", "kind"}]} where
-kind is "page" (Chrome: PDF as a reader sees it, plus the rendered HTML), "reddit" (the thread's
-JSON rendered to Markdown: post, then comments with author, time and score) or "file" (raw bytes).
+kind is "page" (Chrome: PDF as a reader sees it, plus the rendered HTML), "file" (raw bytes) or
+"manual" (never fetched: a person saves it in a browser and imports it).
 
-Sites that refuse automated access (bot protection, HTTP 403) are not worked around: capture lists
-them, the tester saves each one in a normal browser (Print > Save as PDF) and imports it. For a
-Reddit thread, saving <thread url>.json from the browser is better: import renders it to Markdown.
+Only sources whose terms allow it are fetched automatically: official, government and openly licensed
+pages and files. A site whose terms forbid scraping or automated access (Reddit, X, LinkedIn,
+perplexity.ai, ...) is kind "manual", and a pack that points "page" or "file" at one is rejected.
+Sites that refuse automated access (bot protection, HTTP 403) are not worked around either: capture
+lists them, the tester saves each one in a normal browser (Print > Save as PDF) and imports it.
 Snapshots live in ~/.kw-eval/cache/snapshots/<pack>/ and are never committed: the
 sources are linked, not bundled. Only their hashes are, in knowledgework/portable/snapshots.lock.json.
 """
@@ -30,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -49,6 +52,17 @@ class SnapshotError(RuntimeError):
     pass
 
 
+KINDS = ("page", "file", "manual")
+#: Sites whose terms forbid scraping or automated access: their sources can only be kind "manual".
+NO_AUTOMATION = ("reddit.com", "redd.it", "x.com", "twitter.com", "linkedin.com", "perplexity.ai",
+                 "facebook.com", "instagram.com", "threads.net", "tiktok.com")
+
+
+def no_automation(url: str) -> bool:
+    host = urllib.parse.urlsplit(url).hostname or ""
+    return any(host == d or host.endswith("." + d) for d in NO_AUTOMATION)
+
+
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -62,8 +76,11 @@ def pack_sources(pack: str, packs_file: Path = PACKS) -> list[dict]:
     if len(ids) != len(set(ids)):
         raise SnapshotError(f"pack {pack} repeats an id")
     for s in sources:
-        if s.get("kind") not in ("page", "reddit", "file") or not s.get("url", "").startswith("https://"):
+        if s.get("kind") not in KINDS or not s.get("url", "").startswith("https://"):
             raise SnapshotError(f"pack {pack}: bad source {s}")
+        if s["kind"] != "manual" and no_automation(s["url"]):
+            raise SnapshotError(f"pack {pack}: {s['id']} is on a site whose terms forbid automated access; "
+                                "make it kind \"manual\" and save it in a browser")
     return sources
 
 
@@ -112,7 +129,7 @@ def visible_words(html: str) -> int:
 
 
 def readable(html: str) -> None:
-    """Refuse what isn't the page: a bot check, or a near-empty shell (Reddit serves one to scripts)."""
+    """Refuse what isn't the page: a bot check, or a near-empty shell served to scripts."""
     marker = challenge_page(html)
     if marker:
         raise SnapshotError(f"the site served a bot check ({marker!r}) instead of the page")
@@ -123,81 +140,15 @@ def readable(html: str) -> None:
 
 def capture_page(src: dict, dest: Path) -> list[Path]:
     pdf, html = dest / f"{src['id']}.pdf", dest / f"{src['id']}.html"
-    try:
-        dom = chrome("--dump-dom", src["url"]).stdout
-        readable(dom)
-        target = src["url"]
-    except SnapshotError as refused:
-        # Some sites refuse the headless browser but serve an honestly identified plain client; take the
-        # page that way only if it is the real page, then print the saved copy. Nothing is disguised.
-        try:
-            dom = http_get(src["url"]).decode("utf-8", errors="replace")
-            readable(dom)
-        except (OSError, SnapshotError) as e:
-            raise SnapshotError(f"{refused}; a plain download got: {e}") from e
-        html.write_text(dom, encoding="utf-8")
-        target = html.resolve().as_uri()
-    chrome(f"--print-to-pdf={pdf}", target)
+    # A site that refuses the automated browser has said no to automation: no other client is tried.
+    dom = chrome("--dump-dom", src["url"]).stdout
+    readable(dom)
+    chrome(f"--print-to-pdf={pdf}", src["url"])
     if not pdf.is_file() or pdf.stat().st_size < 1000:
         pdf.unlink(missing_ok=True)
         raise SnapshotError(f"Chrome produced no usable PDF for {src['url']}")
     html.write_text(dom, encoding="utf-8")
     return [pdf, html]
-
-
-def _when(utc: float | None) -> str:
-    if not utc:
-        return "date not shown"
-    return dt.datetime.fromtimestamp(utc, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-
-def reddit_markdown(thread: list, url: str) -> str:
-    """Post and comment tree as Markdown. Unloaded replies are counted, never invented."""
-    post = thread[0]["data"]["children"][0]["data"]
-    lines = [f"# {post.get('title', '')}", "",
-             f"Source: {url}", f"Subreddit: r/{post.get('subreddit', '?')}",
-             f"Original poster: u/{post.get('author', '[deleted]')} · {_when(post.get('created_utc'))} · "
-             f"score {post.get('score', '?')} · {post.get('num_comments', '?')} comments", "",
-             "## Post (original poster)", "", (post.get("selftext") or "(no text)").strip(), "",
-             "## Comments", ""]
-
-    def walk(children: list, depth: int) -> None:
-        for c in children:
-            kind, d = c.get("kind"), c.get("data", {})
-            pad = "  " * depth
-            if kind == "more":
-                n = d.get("count", 0)
-                if n:
-                    lines.append(f"{pad}- [{n} more repl{'y' if n == 1 else 'ies'} not loaded in this snapshot]")
-                continue
-            if kind != "t1":
-                continue
-            op = " (original poster)" if d.get("is_submitter") else ""
-            body = (d.get("body") or "").strip().replace("\n", f"\n{pad}  ")
-            lines.append(f"{pad}- **u/{d.get('author', '[deleted]')}{op}** · {_when(d.get('created_utc'))} · "
-                         f"score {d.get('score', '?')}")
-            lines.append(f"{pad}  {body}")
-            replies = d.get("replies")
-            if isinstance(replies, dict):
-                walk(replies.get("data", {}).get("children", []), depth + 1)
-
-    walk(thread[1]["data"]["children"], 0)
-    return "\n".join(lines) + "\n"
-
-
-def capture_reddit(src: dict, dest: Path) -> list[Path]:
-    api = src["url"].split("?")[0].rstrip("/") + ".json?raw_json=1&limit=500"
-    try:
-        raw = http_get(api)
-        thread = json.loads(raw)
-    except (OSError, ValueError) as e:  # blocked, rate-limited or not JSON: try the plain page
-        print(f"warning: {src['id']}: Reddit JSON unavailable ({e}); trying old.reddit as a page", file=sys.stderr)
-        old = dict(src, url=src["url"].replace("://www.reddit.com", "://old.reddit.com"))
-        return capture_page(old, dest)
-    (dest / f"{src['id']}.json").write_bytes(raw)
-    md = dest / f"{src['id']}.md"
-    md.write_text(reddit_markdown(thread, src["url"]), encoding="utf-8")
-    return [md, dest / f"{src['id']}.json"]
 
 
 def capture_file(src: dict, dest: Path) -> list[Path]:
@@ -207,7 +158,7 @@ def capture_file(src: dict, dest: Path) -> list[Path]:
     return [out]
 
 
-CAPTURE = {"page": capture_page, "reddit": capture_reddit, "file": capture_file}
+CAPTURE = {"page": capture_page, "file": capture_file}
 
 
 def _entry(src: dict, f: Path, how: str) -> dict:
@@ -238,6 +189,10 @@ def capture(pack: str, root: Path = ROOT, packs_file: Path = PACKS, retry: bool 
     dest.mkdir(parents=True, exist_ok=True)
     manual = []
     for src in sources:
+        if src["kind"] == "manual":
+            print(f"needs a manual save: {src['id']} {src['url']} (not fetched automatically)", file=sys.stderr)
+            manual.append(src["id"])
+            continue
         try:
             files = CAPTURE[src["kind"]](src, dest)
         except (SnapshotError, OSError) as e:
@@ -267,19 +222,9 @@ def import_manual(pack: str, sid: str, file: Path, root: Path = ROOT, packs_file
         raise SnapshotError(f"{sid} is already in {manifest_path}; a source is saved once")
     out = dest / f"{sid}{file.suffix.lower()}"
     shutil.copyfile(file, out)
-    if src["kind"] == "reddit" and out.suffix == ".json":
-        # The thread's .json saved from a browser: render the same Markdown an automatic capture would.
-        try:
-            md_text = reddit_markdown(json.loads(out.read_text(encoding="utf-8")), src["url"])
-        except (ValueError, KeyError, IndexError, TypeError) as e:
-            out.unlink()
-            raise SnapshotError(f"{file} is not a Reddit thread's JSON ({e})") from e
-        md = dest / f"{sid}.md"
-        md.write_text(md_text, encoding="utf-8")
-        entries.append(_entry(src, md, "manual"))
     entries.append(_entry(src, out, "manual"))
     order = [s["id"] for s in sources]
-    entries.sort(key=lambda e: order.index(e["id"]))  # stable: an id's own files keep their order
+    entries.sort(key=lambda e: order.index(e["id"]))
     return _write_manifest(dest, pack, entries)
 
 
