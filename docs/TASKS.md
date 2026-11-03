@@ -33,7 +33,7 @@ python tools/snapshot_sources.py lock P           # once every source is in and 
 python tools/snapshot_sources.py zip P P.zip      # then on the test machine: unzip P.zip (verifies)
 ```
 
-Sites behind bot protection (amd.com, perplexity.ai and Reddit at the time of writing) are not worked around: save those pages in a normal browser (Print > Save as PDF; for Reddit, save the thread's `.json` URL, which imports as readable Markdown) and import them.
+Only official, government and openly licensed pages and files are fetched automatically. Sites whose terms forbid automated access (perplexity.ai, Reddit, X, LinkedIn) are kind `manual` in `packs.json` and never fetched, and sites behind bot protection (amd.com at the time of writing) are not worked around: save those pages in a normal browser (Print > Save as PDF) and import them.
 
 **The packs are not locked yet** (`knowledgework/portable/snapshots.lock.json` is not committed), so the tasks built from them are listed as not run, not failed.
 
