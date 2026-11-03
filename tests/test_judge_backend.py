@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """The judge's api backend (the Anthropic Messages API, no Claude Code), against a faked client: it sends what
 ``claude -p`` gets, parses the same way, retries what is transient, and says in the scorecard which backend judged.
 No live call, unless KW_JUDGE_API_LIVE=1 (and ANTHROPIC_API_KEY) is set."""
@@ -8,8 +10,12 @@ import sys
 from types import SimpleNamespace
 
 import anthropic
-import httpx
 import pytest
+
+try:  # the HTTP library the installed SDK is built on: httpx2 from anthropic 2.x, httpx before
+    import httpx2 as httpx
+except ImportError:
+    import httpx
 
 from kwengine import _support as ft
 from kwengine import cli, grade
@@ -21,6 +27,16 @@ LIVE_KEY = os.environ.get("ANTHROPIC_API_KEY") if os.environ.get("KW_JUDGE_API_L
 API_ENV = {ft.JUDGE_BACKEND_ENV: "api", ft.API_KEY_ENV: KEY}
 GRADE = {"instruction_compliance": 5, "work_quality": 4, "accuracy": 5, "completeness": 4, "fabrication_free": 5,
          "answers_correctly": True, "missing": "", "one_line": "ok"}
+#: The SDK reads these from the process environment itself, so a machine behind an Anthropic gateway would
+#: send the offline tests' requests to the gateway with its headers. The live test keeps them.
+GATEWAY_ENV = ("ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_AUTH_TOKEN")
+
+
+@pytest.fixture(autouse=True)
+def _no_gateway(request, monkeypatch):
+    if "live" not in request.node.name:
+        for name in GATEWAY_ENV:
+            monkeypatch.delenv(name, raising=False)
 
 
 def message(text, stop_reason="end_turn", model="claude-opus-5-5", input_tokens=1000, output_tokens=100):
@@ -246,7 +262,9 @@ def test_the_real_sdk_streams_retries_and_parses_offline(monkeypatch):
     assert grades == {"attempt-1": {"one_line": "ok"}} and pauses == [1.0] and len(requests) == 2
     assert cost == pytest.approx((500 * 4 + 50 * 20) / 1e6)
     body = json.loads(requests[-1].content)
-    assert requests[-1].headers["x-api-key"] == KEY and body["model"] == "claude-opus-5-5" and body["stream"]
+    headers = requests[-1].headers  # the key: x-api-key before anthropic 2.x, a bearer token from 2.x
+    assert KEY in (headers.get("x-api-key"), headers.get("authorization", "").removeprefix("Bearer "))
+    assert body["model"] == "claude-opus-5-5" and body["stream"]
     assert body["messages"] == [{"role": "user", "content": "the payload"}]
 
 
