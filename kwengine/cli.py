@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import workspace
-from ._support import DEFAULT_CLAUDE_MODEL
+from ._support import DEFAULT_CLAUDE_MODEL, JUDGE_BACKEND_ENV, JUDGE_BACKENDS
 
 EPILOG = """
 Examples:
@@ -184,6 +184,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Claude model that grades (default: {DEFAULT_CLAUDE_MODEL})",
     )
     grade.add_argument(
+        "--judge-backend",
+        choices=JUDGE_BACKENDS,
+        default=None,
+        help=f"How the judge is called: claude-code (`claude -p`, signed in) or api (the Anthropic Messages API "
+        f"on ANTHROPIC_API_KEY). Default: ${JUDGE_BACKEND_ENV}, else claude-code (api when the claude CLI is "
+        "missing and a key is set)",
+    )
+    grade.add_argument(
         "--judge-attempts",
         type=int,
         default=1,
@@ -286,6 +294,7 @@ def run(args: argparse.Namespace) -> None:
             print(f"[RECORDED] {path.resolve()}")
             return
         if action == "grade":
+            from . import _support as ft  # pylint: disable=import-outside-toplevel
             from . import grade, turns  # pylint: disable=import-outside-toplevel
 
             if args.judge_attempts < 1:
@@ -303,7 +312,13 @@ def run(args: argparse.Namespace) -> None:
             for run_dir in run_dirs:  # a separate-user task changed after its turn is contaminated
                 turns.check(run_dir)
             judge_model = args.judge_model or DEFAULT_CLAUDE_MODEL
-            print(f"[JUDGE] {judge_model}")
+            env = dict(os.environ)
+            if args.judge_backend:
+                env[JUDGE_BACKEND_ENV] = args.judge_backend
+            backend, note = ft.resolve_judge_backend(env)
+            print(f"[JUDGE] {ft.judge_model_id(judge_model, backend)} via {backend}")
+            if note:
+                print(f"[JUDGE] {note}")
             answers = None
             if getattr(args, "answers_stdin", False):
                 # The decrypted answers, piped in by tools/grade_run.py: never written to disk here.
@@ -311,7 +326,7 @@ def run(args: argparse.Namespace) -> None:
             cards = grade.grade_runs(
                 run_dirs,
                 judge_model,
-                dict(os.environ),
+                env,
                 answers=answers,
                 attempts=args.judge_attempts,
                 cache_dir=_path(args.cache_dir),
