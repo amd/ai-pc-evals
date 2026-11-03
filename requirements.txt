@@ -2,7 +2,7 @@
 openpyxl>=3.1
 python-docx>=1.1
 python-pptx>=1.0
-pymupdf>=1.25
+pypdfium2>=5.0       # build_fixtures.py PDF text, tools/render.py pages
 # kwengine: PDF text for the judge, and the screen recorder's process check.
 pypdf>=4
 psutil>=5.9
