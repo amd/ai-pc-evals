@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Which eval a result came from: framework version, commit and a fingerprint of the task set.
 
 usage: python tools/evalversion.py      (prints it as JSON)

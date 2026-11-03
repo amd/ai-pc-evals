@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """tools/perplexity/thread_answer.py: the final answer from a copied Perplexity thread."""
 import io
 import subprocess

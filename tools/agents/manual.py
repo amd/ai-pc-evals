@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """An agent a person drives through its own app (Perplexity Computer, a chat UI...), in agents.json:
 
   "perplexity-computer": {"manual": true, "about": "...", "capabilities": ["web", "connectors"]}

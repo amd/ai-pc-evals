@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Build the release package: everything needed to run the evals on a PC, nothing that isn't.
 
 usage: python tools/package.py [--out dist] [--tag v0.2.0]

@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Extract the agent's final answer from a copied Perplexity thread (stdin) to stdout.
 
 usage: python thread_answer.py [--prompt-file FILE] < thread.txt

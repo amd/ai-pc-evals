@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Any agent with a command line, described in tools/agents/agents.json: no code needed.
 
   "hermes": {

@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Wait for a prepared task's deliverables, then print seconds from start to the last write.
 
 usage: python wait_task.py <leg> <batch> <task-id>

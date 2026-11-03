@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Choosing tasks to run: ids and globs, categories by prefix, tags, needs, grading kind, exclusions."""
 import pytest
 

@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Layer 4 for any agent: run its command as a separate, standard Windows user.
 
 Set ``KW_AGENT_USER`` (e.g. ``kwagent``) and every command-line agent the runner starts (Claude Code, the

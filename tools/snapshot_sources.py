@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Save a pack of linked sources once, so every run and every machine gets identical copies.
 
 usage:

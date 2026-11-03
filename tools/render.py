@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Render a deliverable to one PNG per slide or page, as a person would see it.
 
 usage: python tools/render.py <file> <out-dir> [--backend auto|office|libreoffice] [--dpi 110]

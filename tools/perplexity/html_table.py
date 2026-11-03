@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """One-page HTML summary (every leg side by side), plus a PNG via headless Chrome.
 
 usage: python html_table.py [out.html]   -> writes out.html and out.png

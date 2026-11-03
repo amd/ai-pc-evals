@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """The release package: versioned, self-describing, and only what a PC needs to run the evals."""
 import json
 import subprocess
