@@ -818,9 +818,13 @@ def grade_runs(
     Every attempt is keyed by a random id that names no task, run or agent, and the attempts of all the runs are
     shuffled together before they are batched: given two legs (``kwengine grade RUN_A RUN_B``), the judge reads
     each leg's work beside the other's, in no order it could learn from."""
+    # The backend (KW_JUDGE_BACKEND in *env*: Claude Code by default) is settled once, so one run is one judge.
+    backend, note = ft.resolve_judge_backend(env)
+    env = {**env, ft.JUDGE_BACKEND_ENV: backend}
     prepared = [_prepare_run(Path(d), cache_dir, fixtures_root, tasks_file, answers, only) for d in run_dirs]
     grades = _judge_all([a for p in prepared for a in p["attempts"]], judge_model, env, attempts)
-    return [_finish_run(p, grades, judge_model, on_progress) for p in prepared]
+    judge = {"model": ft.judge_model_id(judge_model, backend), "backend": backend, "note": note}
+    return [_finish_run(p, grades, judge, on_progress) for p in prepared]
 
 
 def neutral_key(taken: set) -> str:
@@ -920,9 +924,11 @@ def _judge_all(pending: List[KwAttempt], judge_model: str, env: Mapping[str, str
     return grades
 
 
-def _finish_run(prepared: Mapping[str, Any], grades: Mapping[str, Dict[str, Any]], judge_model: str,
+def _finish_run(prepared: Mapping[str, Any], grades: Mapping[str, Dict[str, Any]], judge: Mapping[str, str],
                 on_progress: Optional[Callable[[str, Dict[str, Any]], None]]) -> Dict[str, Any]:
-    """The run's scorecard from the judge's grades, written to the run folder."""
+    """The run's scorecard from the judge's grades, written to the run folder. *judge* is the judge's ``model``
+    (its API id on the ``api`` backend), ``backend`` and the ``note`` of a fallback to the API, if any."""
+    judge_model = judge["model"]
     run_dir, run, by_id = prepared["run_dir"], prepared["run"], prepared["by_id"]
     results, chosen, only = prepared["results"], prepared["chosen"], prepared["only"]
     entries, scrubber = prepared["entries"], prepared["scrubber"]
@@ -957,6 +963,10 @@ def _finish_run(prepared: Mapping[str, Any], grades: Mapping[str, Dict[str, Any]
         # Prepared (and chosen) but never recorded: not run, listed rather than silently absent.
         "unrecorded": [t for t in chosen if t not in {r["task"] for r in results}],
     }
+    if judge["backend"] != ft.CLAUDE_CODE_BACKEND:  # no judge_backend: Claude Code, as in every earlier scorecard
+        card["judge_backend"] = judge["backend"]
+    if judge.get("note"):
+        card["judge_backend_note"] = judge["note"]
     family = same_family(judge_model, results)
     if family:  # a judge may favour its own family's style: say so wherever the result is read
         card["judge_same_family"] = family
@@ -1014,12 +1024,23 @@ def merge_cards(old: Optional[Mapping[str, Any]], new: Mapping[str, Any], run_ta
     judges = sorted({j for j in ((old or {}).get("judge_model"), new.get("judge_model")) if j})
     if old and len(judges) > 1:
         card["judge_model"] = "mixed: " + ", ".join(judges)
+    backends = sorted({b.strip() for c in (old, new) if c
+                       for b in judge_backend(c).removeprefix("mixed: ").split(",")})
+    if len(backends) > 1:
+        card["judge_backend"] = "mixed: " + ", ".join(backends)
+    if old and old.get("judge_backend_note") and not card.get("judge_backend_note"):
+        card["judge_backend_note"] = old["judge_backend_note"]  # part of it was judged after a fallback
     family = new.get("judge_same_family") or (old or {}).get("judge_same_family")
     if family:  # flagged when any part was graded by the agent's own family
         card["judge_same_family"] = family
     card["regraded"] = [t["id"] for t in new["tasks"]]
     card["cost"] = ft.run_cost(card)
     return card
+
+
+def judge_backend(card: Mapping[str, Any]) -> str:
+    """Which backend judged *card*: a scorecard without ``judge_backend`` was judged through Claude Code."""
+    return str(card.get("judge_backend") or ft.CLAUDE_CODE_BACKEND)
 
 
 def render(card: Mapping[str, Any]) -> str:
