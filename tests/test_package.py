@@ -117,3 +117,25 @@ def test_the_fingerprint_orders_files_the_same_on_every_os(tmp_path, monkeypatch
     for name, body in (("d/B.txt", b"upper"), ("d/a.txt", b"lower")):
         h.update(name.encode() + b"\0" + body + b"\0")
     assert evalversion.tasks_fingerprint(tmp_path) == h.hexdigest()[:12]
+
+
+def test_pyproject_reads_version_and_dependencies_from_the_files_the_package_ships():
+    import tomllib
+
+    project = tomllib.loads((package.REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    dynamic = project["tool"]["setuptools"]["dynamic"]
+    assert set(project["project"]["dynamic"]) == {"version", "dependencies"}
+    assert dynamic["version"] == {"file": "VERSION"} and dynamic["dependencies"] == {"file": "requirements.txt"}
+    assert project["project"]["requires-python"] == ">=3.12"
+    for f in ("pyproject.toml", "requirements.txt", "constraints.txt", "VERSION"):
+        assert not f.startswith(package.EXCLUDE_PREFIXES), f  # the release package installs the same way
+
+
+def test_constraints_pin_only_what_requirements_ask_for():
+    def names(path, sep):
+        lines = (ln.split("#")[0].strip() for ln in (package.REPO / path).read_text(encoding="utf-8").splitlines())
+        return {ln.split(sep)[0].split(">=")[0].split(";")[0].strip().lower(): ln for ln in lines if ln and not ln.startswith("-")}
+
+    pins = names("constraints.txt", "==")
+    assert pins and all("==" in ln for ln in pins.values())
+    assert set(pins) <= set(names("requirements.txt", "=="))
