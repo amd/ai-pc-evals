@@ -3,7 +3,7 @@
 usage: python tools/render.py <file> <out-dir> [--backend auto|office|libreoffice] [--dpi 110]
 
 Everything goes through PDF: Office (PowerShell COM, Windows) or LibreOffice converts
-pptx/docx/xlsx, Chrome prints html, and PyMuPDF rasterises the pages. Images pass through.
+pptx/docx/xlsx, Chrome prints html, and pypdfium2 (PDFium) rasterises the pages. Images pass through.
 With --backend auto, a Windows PC without Office (its COM classes not registered) falls back to
 LibreOffice when soffice is found.
 The source is copied first, so a deliverable is never opened in place.
@@ -158,18 +158,19 @@ def to_pdf(src: Path, work: Path, backend: str) -> Path:
 
 
 def pdf_to_pngs(pdf: Path, out_dir: Path, stem: str, dpi: int) -> list[Path]:
-    import fitz  # PyMuPDF
+    import pypdfium2 as pdfium
 
     out = []
-    with fitz.open(pdf) as doc:
-        if doc.page_count > MAX_PAGES:
-            print(f"warning: {pdf.name} has {doc.page_count} pages; rendering the first {MAX_PAGES}", file=sys.stderr)
-        for i, page in enumerate(doc):
-            if i >= MAX_PAGES:
-                break
+    doc = pdfium.PdfDocument(pdf)
+    try:
+        if len(doc) > MAX_PAGES:
+            print(f"warning: {pdf.name} has {len(doc)} pages; rendering the first {MAX_PAGES}", file=sys.stderr)
+        for i in range(min(len(doc), MAX_PAGES)):
             png = out_dir / f"{stem}-p{i + 1:02d}.png"
-            page.get_pixmap(dpi=dpi).save(png)
+            doc[i].render(scale=dpi / 72).to_pil().convert("RGB").save(png)
             out.append(png)
+    finally:
+        doc.close()
     return out
 
 
