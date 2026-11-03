@@ -99,12 +99,12 @@ def test_local_graded_run_shows_no_cost_unless_marked_cloud(tmp_path, capsys):
     assert "$—" in capsys.readouterr().out
 
 
-def test_published_perplexity_scoreboard_still_renders():
+def test_example_scoreboard_still_renders():
     out = subprocess.run([sys.executable, str(REPO / "tools" / "results_tables.py"),
-                          str(REPO / "scoreboard" / "perplexity-computer.json")],
+                          str(REPO / "scoreboard" / "example-synthetic.json")],
                          capture_output=True, text=True, encoding="utf-8", check=True).stdout
     assert out.index("Table 1") < out.index("Table 2")
-    assert "| **All** (16) | 12/16 · Q 4.4 · 52m 48s · $19.78 | 1/1 · Q 4.8 · 3m 57s |" in out
+    assert "| **All** (16) | 11/16 · Q 4.0 · 63m 00s · $16.00 | 1/3 · Q 3.5 · 43m 00s |" in out
     # docs/RESULTS.md shows excerpts of this output: every rendered line it quotes must still be true
     docs = (REPO / "docs" / "RESULTS.md").read_text(encoding="utf-8")
     section = docs[docs.index("## Comparing experiments"):docs.index("## Comparing how deliverables look")]
