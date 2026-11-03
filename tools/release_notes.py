@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Print one version's section of CHANGELOG.md, for the GitHub release.
 
 usage: python tools/release_notes.py v0.2.0 [--changelog CHANGELOG.md]

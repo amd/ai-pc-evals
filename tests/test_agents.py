@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Agent adapters and the eval runner's own steps, offline: no real agent is launched."""
 import json
 import subprocess

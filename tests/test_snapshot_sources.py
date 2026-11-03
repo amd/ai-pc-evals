@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """snapshot_sources.py offline: captures are faked; manifest, lock, verify and bundles are real."""
 import json
 import pathlib

@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 # usage: download_all.sh
 # Optional: download every task's source documents and build all inputs and answer keys in
 # one go (~750 MB). By default prep_task.sh downloads only what each task needs, just before

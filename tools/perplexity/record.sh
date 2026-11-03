@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 # usage: record.sh <leg> <batch> <task> <credits> "<app time e.g. 2m 51s>" [model]
 # Optional: KW_MODE, KW_REASONING, KW_SPEED, KW_APP_VERSION, KW_QUEUE_SECONDS, KW_LOCAL_TOKENS, KW_ENGINE_BUILD and
 # KW_OUTCOME (stalled-asked-human, did-not-run) are passed to kwengine record (see _env.sh).

@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Comparing two graded runs (with a gate), stability over repeats, and judge controls."""
 import json
 

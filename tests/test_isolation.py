@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Layer 4 for any agent: the separate-user runner (tools/isolation.py) and how run_capped uses it."""
 import dataclasses
 import io
