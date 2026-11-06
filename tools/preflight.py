@@ -283,7 +283,9 @@ def walk_files(roots: Sequence[Path], skip: Sequence[Path], deadline: float, see
                 if entry.is_symlink() or (hasattr(entry, "is_junction") and entry.is_junction()):
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    if entry.name not in SKIP_DIR_NAMES:
+                    # A Python virtual environment of any name, like "venv" and ".venv" above: installed packages
+                    # (a minified JS bundle in share/jupyter) share enough 10-word runs with a key to look like one.
+                    if entry.name not in SKIP_DIR_NAMES and not os.path.isfile(os.path.join(entry.path, "pyvenv.cfg")):
                         subdirs.append(Path(entry.path))
                 elif entry.is_file(follow_symlinks=False):
                     st = entry.stat(follow_symlinks=False)
