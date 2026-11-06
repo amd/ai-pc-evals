@@ -186,6 +186,15 @@ def test_the_agents_pwd_names_its_task_folder_not_the_runners(tmp_path, monkeypa
     assert code == 0 and out.strip() == str(tmp_path.resolve())
 
 
+@pytest.mark.skipif(WINDOWS or sys.prefix == sys.base_prefix, reason="POSIX, run from a virtual environment")
+def test_the_agent_gets_the_runners_virtual_environment_first_on_its_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("KW_AGENT_USER", raising=False)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")  # as if the virtual environment was never activated
+    out, _, code, _ = base.run_capped([sys.executable, "-c", "import os; print(os.environ['PATH'])"], timeout=60,
+                                      cwd=tmp_path)
+    assert code == 0 and out.strip().split(os.pathsep)[0] == os.path.dirname(sys.executable)
+
+
 def test_a_manual_agent_reports_same_user_even_with_an_agent_user_set(monkeypatch):
     from agents import get_agent
 
