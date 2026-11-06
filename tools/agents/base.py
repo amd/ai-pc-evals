@@ -114,7 +114,7 @@ def run_capped(cmd: List[str], *, timeout: float, input: Optional[str] = None, s
     node behind a .cmd shim, a dev server) holds open: the run would hang past its cap. This kills the tree
     and keeps whatever was printed before the cap.
 
-    With KW_AGENT_USER set, the command runs as that Windows user instead (tools/isolation.py, Layer 4).
+    With KW_AGENT_USER set, the command runs as that user instead (tools/isolation.py, Layer 4).
     """
     import isolation  # noqa: PLC0415  (tools/ is on sys.path for the runner and the tests)
 

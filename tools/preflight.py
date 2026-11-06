@@ -382,7 +382,8 @@ def _check_kept_out(path: Path, user: str, warnings: List[str]) -> List[Finding]
         warnings.append(f"not swept: {path} (maintainer-only by design; only Layer 4 keeps an agent out of it: "
                         "set KW_AGENT_USER and deny that user read, secrets/README.md, Layer 4)")
         return []
-    deny = f'icacls "{path}" /deny "{user}:{"(OI)(CI)" if path.is_dir() else ""}R"'
+    deny = (f'setfacl -m "u:{user}:---" "{path}"' if os.name != "nt"
+            else f'icacls "{path}" /deny "{user}:{"(OI)(CI)" if path.is_dir() else ""}R"')
     readable = _can_read(path, user)
     if readable is False:
         warnings.append(f"not swept: {path} (maintainer-only by design; its ACL keeps {user} from reading it)")
