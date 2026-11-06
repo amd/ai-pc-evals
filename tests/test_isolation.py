@@ -177,6 +177,15 @@ def test_without_an_agent_user_run_capped_runs_as_before(tmp_path, monkeypatch):
     assert out.strip() == "hi" and code == 0
 
 
+@pytest.mark.skipif(WINDOWS, reason="PWD is a POSIX shell variable")
+def test_the_agents_pwd_names_its_task_folder_not_the_runners(tmp_path, monkeypatch):
+    monkeypatch.delenv("KW_AGENT_USER", raising=False)
+    monkeypatch.setenv("PWD", "/somewhere/the/runner/started")  # what the runner's shell left behind
+    out, _, code, _ = base.run_capped([sys.executable, "-c", "import os; print(os.environ['PWD'])"], timeout=60,
+                                      cwd=tmp_path)
+    assert code == 0 and out.strip() == str(tmp_path.resolve())
+
+
 def test_a_manual_agent_reports_same_user_even_with_an_agent_user_set(monkeypatch):
     from agents import get_agent
 
