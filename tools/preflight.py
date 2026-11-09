@@ -357,6 +357,13 @@ def classify(path: Path, matcher: fp.Matcher, max_bytes: int = MAX_SWEEP_BYTES,
     return None
 
 
+def _layer4_doc(step: str = "") -> str:
+    """Where this OS's Layer 4 setup is (isolation.setup_doc; this file also runs alone)."""
+    if os.name == "nt":
+        return "secrets/README.md, Layer 4" + (f", step {step}" if step else "")
+    return "docs/SECURITY.md, Layer 4 on Linux"
+
+
 def _agent_user(env: dict) -> str:
     """``KW_AGENT_USER``, checked by tools/isolation.py; "" when unset (or when isolation.py isn't beside this file)."""
     if not (env.get("KW_AGENT_USER") or "").strip():
@@ -380,7 +387,7 @@ def _check_kept_out(path: Path, user: str, warnings: List[str]) -> List[Finding]
     """A maintainer-only path --strict doesn't sweep: with ``KW_AGENT_USER``, its ACL must keep that user out."""
     if not user:
         warnings.append(f"not swept: {path} (maintainer-only by design; only Layer 4 keeps an agent out of it: "
-                        "set KW_AGENT_USER and deny that user read, secrets/README.md, Layer 4)")
+                        f"set KW_AGENT_USER and deny that user read, {_layer4_doc()})")
         return []
     deny = (f'setfacl -m "u:{user}:---" "{path}"' if os.name != "nt"
             else f'icacls "{path}" /deny "{user}:{"(OI)(CI)" if path.is_dir() else ""}R"')
@@ -391,9 +398,10 @@ def _check_kept_out(path: Path, user: str, warnings: List[str]) -> List[Finding]
     if readable is None:
         return [Finding(str(path), f"maintainer-only (it matches the answers by design) and its ACL doesn't deny "
                         f"{user} by name (or couldn't be read), so nothing confirms {user} is kept out",
-                        f"{deny}   # then verify: secrets/README.md, Layer 4, step 5")]
+                        f"{deny}   # then verify: {_layer4_doc('5')}")]
+    where = "from an elevated prompt: " if os.name == "nt" else ""
     return [Finding(str(path), f"maintainer-only (it matches the answers by design), yet its ACL lets {user} read it",
-                    f"{deny}   # from an elevated prompt: secrets/README.md, Layer 4, step 3")]
+                    f"{deny}   # {where}{_layer4_doc('3')}")]
 
 
 def list_servers(report: Report) -> None:
@@ -441,7 +449,7 @@ def run(
         try:
             agent_user = _agent_user(env)
         except OSError as e:
-            report.failures.append(Finding("KW_AGENT_USER", str(e), "secrets/README.md, Layer 4, step 1"))
+            report.failures.append(Finding("KW_AGENT_USER", str(e), _layer4_doc("1")))
         for p in maintainer_only:
             report.failures += _check_kept_out(p, agent_user, report.warnings)
     else:
