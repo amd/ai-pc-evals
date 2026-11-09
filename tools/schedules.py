@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import csv
 import io
+import os
+import shutil
 import subprocess
 import sys
 from typing import List, Optional, Set
@@ -30,22 +32,55 @@ def _as(user: str, cmd: List[str]) -> List[str]:
     return isolation.sudo(user, cmd)
 
 
-def _run(cmd: List[str], stdin: Optional[str] = None) -> Optional[str]:
-    """What the command printed; None if it couldn't run or failed."""
+def _call(cmd: List[str], stdin: Optional[str] = None) -> Optional[subprocess.CompletedProcess]:
+    """The finished command; None if it couldn't run (not found, timed out)."""
     try:
-        out = subprocess.run(cmd, input=stdin, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             timeout=60)
+        return subprocess.run(cmd, input=stdin, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
-    return out.stdout if out.returncode == 0 else None
+
+
+def _run(cmd: List[str], stdin: Optional[str] = None) -> Optional[str]:
+    """What the command printed; None if it couldn't run or failed."""
+    done = _call(cmd, stdin)
+    return done.stdout if done is not None and done.returncode == 0 else None
+
+
+def _crontab(user: str) -> Optional[str]:
+    """The crontab: "" when there is none (or no cron to keep one), None when it can't be read."""
+    if shutil.which("crontab") is None:
+        return ""
+    done = _call(_as(user, ["crontab", "-l"]))
+    if done is None:
+        return None
+    if done.returncode == 0:
+        return done.stdout
+    return "" if "no crontab for" in (done.stderr or "") else None  # anything else is a failure, not "empty"
+
+
+def _user_manager(user: str) -> Optional[str]:
+    """The runtime folder of *user*'s systemd user manager (the maintainer's when *user* is empty); "" when it
+    has none (no systemd, as on macOS or in a container, or no session and no lingering): then it runs no user
+    timers and none can be started. None when *user* doesn't exist."""
+    if not os.path.isdir("/run/systemd/system") or shutil.which("systemctl") is None:
+        return ""
+    import pwd  # noqa: PLC0415  (POSIX only)
+
+    try:
+        uid = pwd.getpwnam(user).pw_uid if user else os.getuid()
+    except KeyError:
+        return None
+    folder = f"/run/user/{uid}"
+    return folder if os.path.isdir(folder) else ""
 
 
 def snapshot(user: str = "") -> Optional[Set[str]]:
     """The scheduled tasks now: Task Scheduler names (Windows' own excluded); elsewhere ``cron: <line>`` for each
     crontab line and ``timer: <unit>`` for each systemd user timer.
 
-    None when they can't be listed. Not an empty set: every existing task would then look new, and the
-    runner would disable the user's own jobs.
+    None when they can't be listed (only "no crontab for <user>" and "no user manager" mean none). Not an empty
+    set: every existing task would then look new, and the runner would disable the user's own jobs.
     """
     if sys.platform == "win32":
         text = _run(["schtasks", "/query", "/fo", "CSV", "/nh"])
@@ -53,11 +88,18 @@ def snapshot(user: str = "") -> Optional[Set[str]]:
             return None
         rows = csv.reader(io.StringIO(text))
         return {r[0] for r in rows if r and r[0].startswith("\\") and not r[0].startswith("\\Microsoft\\")}
-    text = _run(_as(user, ["crontab", "-l"]))  # None also for "no crontab for user": nothing to compare against
-    found = {"cron: " + ln.strip() for ln in (text or "").splitlines() if ln.strip() and not ln.lstrip().startswith("#")}
-    # No systemd user manager (macOS, a container, an agent user with no session): there are no user timers.
-    timers = _run(_as(user, ["systemctl", "--user", "list-unit-files", "--type=timer", "--no-legend", "--plain"]))
-    found |= {"timer: " + ln.split()[0] for ln in (timers or "").splitlines() if ln.split()}
+    text = _crontab(user)
+    if text is None:
+        return None
+    found = {"cron: " + ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")}
+    manager = _user_manager(user)
+    if manager is None:
+        return None
+    if manager:
+        timers = _run(_as(user, ["systemctl", "--user", "list-unit-files", "--type=timer", "--no-legend", "--plain"]))
+        if timers is None:
+            return None
+        found |= {"timer: " + ln.split()[0] for ln in timers.splitlines() if ln.split()}
     return found
 
 
