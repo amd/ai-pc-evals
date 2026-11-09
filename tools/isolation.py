@@ -186,8 +186,17 @@ def run_as(user: str, cmd: List[str], *, timeout: float, cwd: Path, env: Mapping
         shutil.rmtree(work, ignore_errors=True)  # the prompt, the environment overlay and the raw output
 
 
-#: Linux: enter the task folder and run the command, in the agent user's own login environment (``bash -l``).
-_POSIX_RUN = 'cd -- "$1" || exit 98; shift; exec "$@"'
+#: Linux: enter the task folder, set the environment overlay and run the command, in the agent user's own login
+#: environment (``bash -l``). The overlay comes first on stdin, NAME=VALUE records ending in NUL, then an empty
+#: one: never on the command line, which any local user can read in /proc/<pid>/cmdline and sudo logs. ``read``
+#: takes stdin a byte at a time from a pipe, so the command gets the rest, the agent's own input, untouched.
+_POSIX_RUN = ('cd -- "$1" || exit 98; shift; '
+              'while IFS= read -r -d "" kv && [ -n "$kv" ]; do export -- "$kv"; done; exec "$@"')
+
+
+def overlay_records(overlay: Mapping[str, str]) -> bytes:
+    """The environment overlay as _POSIX_RUN reads it from stdin."""
+    return b"".join(f"{k}={v}".encode("utf-8") + b"\0" for k, v in sorted(overlay.items())) + b"\0"
 
 
 def _feed(proc: subprocess.Popen, data: bytes) -> None:
@@ -210,15 +219,16 @@ def _run_as_posix(user: str, cmd: List[str], *, timeout: float, cwd: Path, env: 
     # agent user ("dubious ownership"): trust them for this command only, through git's environment config.
     overlay = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": "*",
                **env_overlay(env), **(always or {})}
-    launch = sudo(user, ["bash", "-l", "-c", _POSIX_RUN, "kw-run", str(cwd), "env",
-                         *(f"{k}={v}" for k, v in sorted(overlay.items())), *cmd])
+    if any("\0" in k + v or "=" in k or not k for k, v in overlay.items()):
+        raise OSError("an environment variable for the agent has an empty name, or a NUL or '=' in its name")
+    launch = sudo(user, ["bash", "-l", "-c", _POSIX_RUN, "kw-run", str(cwd), *cmd])
     timed_out, note = False, ""
     # Output goes to files and the wait is on the process, not on its pipes (as in base.run_capped): a background
     # child the agent left running (npm run dev &) keeps a pipe open long after the agent has finished.
     with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
         proc = subprocess.Popen(launch, stdin=subprocess.PIPE, stdout=out_f, stderr=err_f)
-        threading.Thread(target=_feed, args=(proc, (input or "").encode("utf-8")), name="kw-run-as-stdin",
-                         daemon=True).start()
+        threading.Thread(target=_feed, args=(proc, overlay_records(overlay) + (input or "").encode("utf-8")),
+                         name="kw-run-as-stdin", daemon=True).start()
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:

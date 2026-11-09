@@ -137,11 +137,14 @@ def test_posix_run_as_goes_through_sudo_in_a_login_shell_with_the_overlay(posix,
     assert (out, rc, timed_out) == ("ran\n", 0, False)
     assert fake.argv[:6] == ["sudo", "-n", "-H", "-u", "kwagent", "--"]  # -n: never a password prompt
     assert fake.argv[6:9] == ["bash", "-l", "-c"]  # the agent user's own login PATH and installs
-    assert fake.argv[10:13] == ["kw-run", str(tmp_path), "env"]
-    assert "PYTHONUTF8=1" in fake.argv and fake.argv[-3:] == ["claude", "-p", "line one\nline two"]
-    assert "GIT_CONFIG_KEY_0=safe.directory" in fake.argv  # git works in the maintainer's task folders
+    assert fake.argv[10:] == ["kw-run", str(tmp_path), "claude", "-p", "line one\nline two"]
+    # The overlay goes first on stdin, never on the command line (/proc/<pid>/cmdline, sudo's log).
+    assert not [a for a in fake.argv if "PYTHONUTF8" in a or "GIT_CONFIG" in a]
     _join_feeder()
-    assert fake.input == "prompt ↑".encode("utf-8")  # no cmd.exe here: newlines and any character pass as they are
+    overlay, prompt = fake.input.split(b"\0\0", 1)
+    assert b"PYTHONUTF8=1" in overlay.split(b"\0")
+    assert b"GIT_CONFIG_KEY_0=safe.directory" in overlay.split(b"\0")  # git works in the maintainer's task folders
+    assert prompt == "prompt ↑".encode("utf-8")  # no cmd.exe here: newlines and any character pass as they are
 
 
 def test_posix_a_missing_sudo_rule_is_an_unavailable_agent_not_a_failed_task(posix, tmp_path, monkeypatch):
@@ -227,6 +230,11 @@ def test_posix_run_as_for_real_runs_as_the_agent_user_and_cannot_read_the_mainta
                                                input="line ↑\n")
     assert (rc, timed_out) == (0, False), err
     assert out.splitlines() == [REAL_AGENT_USER, "line ↑", "a", "b"]
+    # An agent's key in the overlay is on no process's command line (sudo's included), where any user could read it.
+    out, err, rc, _ = isolation.run_as(REAL_AGENT_USER, ["sh", "-c", 'grep -las "kw-se[c]ret-42" /proc/[0-9]*/cmdline | '
+                                                         'wc -l; printf %s "$KW_KEY"'],
+                                       timeout=60, cwd=Path("/tmp"), env={**os.environ, "KW_KEY": "kw-secret-42"})
+    assert (rc, out.split()) == (0, ["0", "kw-secret-42"]), err
     assert isolation.can_read(Path.home(), REAL_AGENT_USER) is False  # Ubuntu's 750 home keeps it out
     assert isolation.can_read(Path("/etc/hostname"), REAL_AGENT_USER) is True
     _, _, rc, _ = isolation.run_as(REAL_AGENT_USER, ["true"], timeout=60, cwd=tmp_path, env={})
