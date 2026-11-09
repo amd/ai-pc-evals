@@ -2,6 +2,8 @@
 import subprocess
 
 import pytest
+
+import isolation
 import schedules
 
 BACKUP = r'"\Backup","N/A","Ready"' + "\n"
@@ -10,7 +12,7 @@ AGENT = r'"\AMD Local AI Feedback TEST","10/19/2026 5:00:00 AM","Ready"' + "\n"
 
 
 def test_only_new_tasks_are_disabled(monkeypatch):
-    monkeypatch.setattr(schedules.sys, "platform", "win32")
+    monkeypatch.setattr(isolation, "WINDOWS", True)
     state = {"listing": BACKUP + DEFRAG}
     monkeypatch.setattr(schedules, "_run", lambda cmd: state["listing"])
     before = schedules.snapshot()
@@ -31,7 +33,7 @@ def test_a_task_that_cannot_be_disabled_is_reported(monkeypatch):
 
 def test_a_listing_that_fails_disables_nothing(monkeypatch):
     # An empty "before" would make every one of the user's jobs look new, and the runner would disable them.
-    monkeypatch.setattr(schedules.sys, "platform", "win32")
+    monkeypatch.setattr(isolation, "WINDOWS", True)
     monkeypatch.setattr(schedules, "_run", lambda cmd: None)
     assert schedules.snapshot() is None
     monkeypatch.setattr(schedules, "snapshot", lambda *a: {r"\Backup", r"\Mine"})
@@ -81,7 +83,7 @@ class FakeCron:
 @pytest.fixture()
 def linux(monkeypatch):
     """Linux with cron and a running systemd user manager, whatever OS runs the tests (commands faked)."""
-    monkeypatch.setattr(schedules.sys, "platform", "linux")
+    monkeypatch.setattr(isolation, "WINDOWS", False)
     monkeypatch.setattr(schedules.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(schedules, "_user_manager", lambda user: "/run/user/1000")
 

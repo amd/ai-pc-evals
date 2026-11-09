@@ -64,7 +64,16 @@ def test_a_python_virtual_environment_of_any_name_is_not_swept(env):
     bundle.parent.mkdir(parents=True)
     (venv / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
     bundle.write_text(key_text(env), encoding="utf-8")  # stands in for a minified bundle that happens to match
+    # pyvenv.cfg alone, with no interpreter beside it, doesn't make a folder a virtual environment: swept.
+    assert bundle in failed_paths(run(env))
+    (venv / "bin").mkdir()
+    (venv / "bin" / "python3").write_text("", encoding="utf-8")
     assert bundle not in failed_paths(run(env))
+    # Only its package folders are skipped: a copy anywhere else in it is still found.
+    beside = venv / "notes" / "key.json"
+    beside.parent.mkdir()
+    beside.write_text(key_text(env), encoding="utf-8")
+    assert failed_paths(run(env)) == [beside]
     (venv / "pyvenv.cfg").unlink()  # the same folder without the marker is an ordinary folder: swept
     assert bundle in failed_paths(run(env))
 

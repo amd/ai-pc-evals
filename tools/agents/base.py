@@ -126,11 +126,11 @@ def run_capped(cmd: List[str], *, timeout: float, input: Optional[str] = None, s
             stdout.write(out)
             out = ""
         return out, err, code, timed_out
-    if popen.get("cwd") and os.name != "nt":
+    if popen.get("cwd") and not isolation.WINDOWS:
         # The shell's PWD would still name the runner's folder (often this repo): agents that take their project
         # folder from PWD rather than the real working directory (OpenCode) then work, and read, there.
         popen["env"] = {**(popen.get("env") or os.environ), "PWD": str(Path(popen["cwd"]).resolve())}
-    if os.name != "nt" and sys.prefix != sys.base_prefix:
+    if not isolation.WINDOWS and sys.prefix != sys.base_prefix:
         # Linux has python3 but often no "python", and the system's lacks the packages tasks write Office files
         # with: run from a virtual environment, the agent gets that one first on its PATH, as if activated.
         env = dict(popen.get("env") or os.environ)

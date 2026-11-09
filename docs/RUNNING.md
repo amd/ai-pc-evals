@@ -50,7 +50,7 @@ python tools/run_eval.py --agent claude-code --model sonnet --suite smoke
 - **Command-line agents** (`agents.json` entries) work as on Windows.
 - **App-driven agents** (`"manual": true`) work as on Windows, for any app that runs on Linux. The prompt goes on the clipboard through `wl-copy` (Wayland), `xclip` or `xsel`; with none of them, the runner names the prompt file to copy from.
 - **The vision judge** renders with LibreOffice (`soffice`). Chrome or Chromium is found on PATH (`google-chrome`, `chromium`), else set `CHROME_PATH`.
-- **Scheduled jobs an agent creates** are contained as on Windows: a new crontab line is commented out and a new systemd user timer, with a unit file or transient (`systemd-run --on-calendar`), is stopped and disabled. Under Layer 4 they are the agent user's; for its timers, see [SECURITY.md, Known limits](SECURITY.md#known-limits).
+- **Scheduled jobs an agent creates** are contained as on Windows: a new crontab line is commented out and a new systemd user timer, with a unit file or transient (`systemd-run --on-calendar`), is stopped and disabled. In a same-user run they are yours: the runner rewrites your real crontab (with every line kept, the agent's commented out) and stops and disables timers in your own systemd user manager. Under Layer 4 they are the agent user's; for its timers, see [SECURITY.md, Known limits](SECURITY.md#known-limits).
 - **Not on Linux:** the dedicated Perplexity runner in `tools/perplexity/` (the app is Windows-only) and screen recording.
 - **Published numbers** need the separate agent user, as on Windows: [SECURITY.md, Layer 4 on Linux](SECURITY.md#layer-4-on-linux).
 

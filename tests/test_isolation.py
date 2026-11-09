@@ -154,6 +154,13 @@ def test_posix_a_missing_sudo_rule_is_an_unavailable_agent_not_a_failed_task(pos
         isolation.run_as("kwagent", ["agent"], timeout=5, cwd=tmp_path, env={})
 
 
+@pytest.mark.parametrize("said", ["sudo: unknown user kwagent\n", "sudo: user 'kwagent' not found\n"])
+def test_posix_a_missing_agent_user_stops_the_run_not_each_task(posix, tmp_path, monkeypatch, said):
+    monkeypatch.setattr(isolation.subprocess, "Popen", FakePopen((b"", said.encode(), 1)))
+    with pytest.raises(OSError, match="there is no user kwagent"):
+        isolation.run_as("kwagent", ["agent"], timeout=5, cwd=tmp_path, env={})
+
+
 def test_posix_a_folder_the_agent_user_cannot_enter_ends_the_task(posix, tmp_path, monkeypatch):
     monkeypatch.setattr(isolation.subprocess, "Popen", FakePopen((b"", b"cd: permission denied\n", 98)))
     out, err, rc, timed_out = isolation.run_as("kwagent", ["agent"], timeout=5, cwd=tmp_path, env={})
