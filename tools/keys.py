@@ -55,6 +55,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
@@ -102,6 +103,32 @@ class WrongPassphrase(KeysError):
 # ---------------------------------------------------------------------------
 
 
+#: How long a credential-store read may take. On Linux a locked keyring reached over SSH waits, forever, for an
+#: unlock prompt shown on the desktop, where nobody sees it.
+KEYRING_TIMEOUT_S = 20
+
+
+def _read_keyring(keyring: Any, user: str = KEYRING_USER) -> Optional[str]:
+    """``keyring.get_password`` for *user*'s passphrase, within KEYRING_TIMEOUT_S (TimeoutError past it)."""
+    box: Dict[str, Any] = {}
+
+    def read() -> None:
+        try:
+            box["value"] = keyring.get_password(KEYRING_SERVICE, user)
+        except Exception as exc:  # noqa: BLE001 - handed to the caller as it is
+            box["error"] = exc
+
+    reader = threading.Thread(target=read, daemon=True)  # a hung backend can't be stopped: left behind, daemon
+    reader.start()
+    reader.join(KEYRING_TIMEOUT_S)
+    if reader.is_alive():
+        raise TimeoutError(f"no answer within {KEYRING_TIMEOUT_S} s (on Linux over SSH, a locked keyring waits for "
+                           "an unlock prompt on the desktop)")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
 def get_passphrase(env: Optional[Mapping[str, str]] = None, *, heldout: bool = False) -> str:
     """A bundle passphrase, from the environment or the OS credential store: the in-repo bundle's
     (``secrets/answers.enc``, before ``publish``), or with *heldout* the held-out set's."""
@@ -116,7 +143,7 @@ def get_passphrase(env: Optional[Mapping[str, str]] = None, *, heldout: bool = F
         keyring = None
     if keyring is not None:
         try:
-            stored = keyring.get_password(KEYRING_SERVICE, user)
+            stored = _read_keyring(keyring, user)
         except Exception as exc:  # keyring backends raise their own types
             raise KeysError(
                 f"Could not read the passphrase from the OS credential store: {exc}. "
@@ -187,7 +214,7 @@ def stored_passphrase() -> Optional[str]:
     """The passphrase in the OS credential store (not the environment), or None."""
     keyring = _keyring_module()
     try:
-        return keyring.get_password(KEYRING_SERVICE, KEYRING_USER) or None
+        return _read_keyring(keyring) or None
     except Exception as exc:  # keyring backends raise their own types
         raise KeysError(f"Could not read the OS credential store: {exc}") from exc
 

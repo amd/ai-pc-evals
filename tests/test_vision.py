@@ -228,6 +228,17 @@ def test_every_call_uses_the_current_model_with_structured_output_and_fallbacks(
         assert "temperature" not in kw  # this model rejects sampling parameters
 
 
+def test_chrome_is_found_on_path_when_chrome_path_is_unset(monkeypatch):
+    monkeypatch.delenv("CHROME_PATH", raising=False)
+    monkeypatch.setattr(render.shutil, "which", lambda name: "/usr/bin/chromium" if name == "chromium" else None)
+    assert render.find_chrome() == "/usr/bin/chromium"
+    monkeypatch.setenv("CHROME_PATH", "/opt/chrome")
+    assert render.find_chrome() == "/opt/chrome"  # an explicit path always wins
+    monkeypatch.delenv("CHROME_PATH")
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    assert render.find_chrome().endswith("chrome.exe")  # Windows' default install, as before
+
+
 def test_office_lock_files_are_not_rendered(tmp_path):
     side = tmp_path / "out"
     side.mkdir()

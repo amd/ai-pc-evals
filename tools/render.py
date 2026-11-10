@@ -26,8 +26,20 @@ OFFICE = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xlsm", ".xls"}
 HTML = {".html", ".htm"}
 IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 CONVERT_TIMEOUT_S = 180
-CHROME = os.environ.get("CHROME_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 MAX_PAGES = 40
+
+
+def find_chrome() -> str:
+    """CHROME_PATH, else Chrome or Chromium on PATH (Linux, macOS), else Chrome's default Windows install."""
+    if os.environ.get("CHROME_PATH"):
+        return os.environ["CHROME_PATH"]
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"):
+        if shutil.which(name):
+            return shutil.which(name)
+    return r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+
+CHROME = find_chrome()
 
 # Opens a copy read-only and invisible, exports PDF, closes it. PowerPoint and Word are
 # single-instance, so the app may be the user's own: quit it only if nothing else is open.

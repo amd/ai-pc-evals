@@ -31,6 +31,7 @@ Run the same checks CI runs:
 python -m pytest -q                        # the tests
 python -m ruff check .                     # Python lint: undefined names, unused code
 shellcheck -S warning $(git ls-files "*.sh")   # shell scripts
+python tools/smoke.py                      # packages the last commit, so commit first (a few minutes; no key, no model)
 ```
 
 `requirements-dev.txt` installs `ruff` and `shellcheck`. Check each command's exit code, not just the last lines of its output.
@@ -41,7 +42,7 @@ The tests include `tests/test_task_data.py`, which checks every task file agains
 
 Every change goes through a pull request against `main`. Nobody pushes to `main` directly, and nobody force-pushes. CI runs two workflows on Ubuntu and Windows with Python 3.13:
 
-- **tests**: `pytest`.
+- **tests**: `pytest`, and a smoke test (`tools/smoke.py`) that builds the release zip, installs it in a clean folder and runs `kw-00-smoke` end to end with a stub agent and `--no-grade`.
 - **lint**: `ruff`, `shellcheck`, that every JSON file parses, that PowerShell scripts parse, and that scripts have the right line endings.
 
 A pull request merges once both are green and a maintainer has reviewed it.
