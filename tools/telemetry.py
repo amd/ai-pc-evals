@@ -33,7 +33,7 @@ import threading
 import time
 from pathlib import Path
 from statistics import mean
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "perplexity"))
 import engine_info  # noqa: E402
