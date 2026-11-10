@@ -36,6 +36,8 @@ class CommandAgent(Agent):
         self.capabilities = frozenset(spec.get("capabilities", []))
         if not spec.get("cmd") or not isinstance(spec["cmd"], list):
             raise ValueError(f"agent {name}: 'cmd' must be a list of arguments")
+        if not isinstance(spec.get("stdin", ""), str):
+            raise ValueError(f"agent {name}: 'stdin' must be a string")
 
     def check(self):
         exe = self.spec["cmd"][0]
