@@ -124,6 +124,19 @@ def test_command_agent_reports_a_missing_cli_and_a_failure(tmp_path):
     assert r.error_kind == "failed" and "exited 3" in r.error
 
 
+def test_an_entry_that_passes_model_refuses_to_start_without_one(monkeypatch):
+    # Without this, `run_eval.py --agent openclaw` would run `openclaw ... --model ""` instead of OpenClaw's default.
+    monkeypatch.setattr("agents.command.shutil.which", lambda exe: "/usr/bin/" + exe)
+    cmd = ["cli", "--model", "{model}", "{prompt_file}"]
+    assert "needs a model" in CommandAgent("x", {"cmd": cmd}).check()
+    assert CommandAgent("x", {"cmd": cmd}, model="local/m").check() is None
+    assert CommandAgent("x", {"cmd": cmd, "default_model": "local/m"}).check() is None
+    assert CommandAgent("x", {"cmd": ["cli", "{prompt_file}"]}).check() is None  # no {model}: nothing to fill
+    openclaw = get_agent("openclaw", "")
+    assert "--model" in openclaw.spec["cmd"] and "needs a model" in openclaw.check()
+    assert get_agent("openclaw", "local/qwen3.8-27b").check() is None
+
+
 def test_registry_lists_built_in_and_configured_agents(tmp_path):
     cfg = tmp_path / "agents.json"
     cfg.write_text(json.dumps({"_about": "x", "hermes": {"about": "Hermes", "cmd": ["hermes", "{prompt_file}"]}}))
