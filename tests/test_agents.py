@@ -142,6 +142,21 @@ def test_shipped_agent_templates_are_valid():
             assert "{prompt_file}" in cmd or "{prompt}" in cmd
 
 
+def test_hermes_is_pointed_at_the_local_server_not_its_ignored_config(tmp_path, monkeypatch):
+    # --ignore-user-config drops every provider in ~/.hermes/config.yaml: the entry must name the server itself.
+    seen = {}
+    monkeypatch.setattr("agents.command.run_capped", lambda cmd, **kw: seen.update(cmd=cmd) or ("ok", "", 0, False))
+    hermes = get_agent("hermes", "qwen3.8-27b")
+    monkeypatch.delenv("KW_LOCAL_BASE_URL", raising=False)
+    hermes.run(task(tmp_path), tmp_path / "log")
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--base-url") + 1] == "http://127.0.0.1:8080/v1" and cmd[cmd.index("--provider") + 1] == "custom"
+    assert "--yolo" in cmd and cmd[cmd.index("--model") + 1] == "qwen3.8-27b"  # without --yolo a prompt blocks the run
+    monkeypatch.setenv("KW_LOCAL_BASE_URL", "http://10.0.0.5:8000/v1")
+    hermes.run(task(tmp_path), tmp_path / "log2")
+    assert seen["cmd"][seen["cmd"].index("--base-url") + 1] == "http://10.0.0.5:8000/v1"
+
+
 def test_the_keys_a_build_derives_never_outlive_it(tmp_path, monkeypatch):
     seen = {}
 
