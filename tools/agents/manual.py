@@ -15,29 +15,44 @@ afterwards; the wait is taken off the wall time. All of it lands under run_info 
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .base import Agent, AgentResult, TaskSpec
 
 
+#: Linux clipboard tools as (copy argv, paste argv), tried in order: Wayland's first when a Wayland session is running
+#: (Ubuntu's default desktop), then X11's.
+_WAYLAND = (["wl-copy"], ["wl-paste", "--no-newline"])
+_X11 = [(["xclip", "-selection", "clipboard"], ["xclip", "-selection", "clipboard", "-o"]),
+        (["xsel", "--clipboard", "--input"], ["xsel", "--clipboard", "--output"])]
+
+
+def _linux_clipboard(paste: bool) -> Optional[List[str]]:
+    for copy, read in ([_WAYLAND] if os.environ.get("WAYLAND_DISPLAY") else []) + _X11 + [_WAYLAND]:
+        if shutil.which(copy[0]):
+            return read if paste else copy
+    return None
+
+
 def set_clipboard(text: str) -> bool:
-    """Best effort: Windows (PowerShell), macOS (pbcopy), Linux (xclip). False when none is there."""
+    """Best effort: Windows (PowerShell), macOS (pbcopy), Linux (wl-copy, xclip, xsel). False when none is there."""
     if sys.platform == "win32":
         # Read stdin as UTF-8 whatever the PC's code page: a prompt's dashes and quotes must paste as they are.
         cmd = ["powershell", "-NoProfile", "-Command",
                "[Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"]
     elif shutil.which("pbcopy"):
         cmd = ["pbcopy"]
-    elif shutil.which("xclip"):
-        cmd = ["xclip", "-selection", "clipboard"]
     else:
-        return False
+        cmd = _linux_clipboard(paste=False)
+        if not cmd:
+            return False
     try:
         return subprocess.run(cmd, input=text, text=True, encoding="utf-8", timeout=20).returncode == 0
     except (OSError, subprocess.SubprocessError):
@@ -49,10 +64,10 @@ def get_clipboard() -> str:
         cmd = ["powershell", "-NoProfile", "-Command", "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw"]
     elif shutil.which("pbpaste"):
         cmd = ["pbpaste"]
-    elif shutil.which("xclip"):
-        cmd = ["xclip", "-selection", "clipboard", "-o"]
     else:
-        return ""
+        cmd = _linux_clipboard(paste=True)
+        if not cmd:
+            return ""
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
         return out.stdout.strip()
