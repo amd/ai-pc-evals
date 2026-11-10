@@ -1,8 +1,25 @@
 """What one agent task cost the local model server and the GPU: run_eval.py --telemetry.
 
-For each task, run_eval.py reads llama-server's /metrics before and after the agent runs (tokens in and out,
-prefill and decode speed; llama-server must run with --metrics) and samples the GPU every second in a background
-thread while the agent works:
+For each task, run_eval.py reads the model server's Prometheus /metrics before and after the agent runs and turns
+the counter deltas into tokens in and out and prefill and decode speed. Servers read (SOURCES says which counter
+feeds which field):
+
+    llama-server      started with --metrics
+    vLLM              always serves /metrics
+    SGLang            started with --enable-metrics
+
+The server is found from its process (tools/local_servers.py; a vLLM or SGLang in a Docker container on Linux shows
+there too, with its in-container port, which the serving skill maps to the same host port). When no such process is
+listed (Docker Desktop, a server psutil can't see), vLLM's and SGLang's default ports, 8000 and 30000, are asked for
+/metrics, and the metric names say which server answered.
+
+tokens_in counts the prompt tokens the server computed: llama-server never counts a prompt token it reuses from its
+cache, so vLLM's and SGLang's prefix-cache hits are taken off their prompt counts. prefill tok/s = tokens_in /
+prefill seconds; decode tok/s = tokens_out / decode seconds. The seconds are each request's time in that phase,
+added up over requests (vLLM's prefill/decode histograms; SGLang's time to first token, which includes queueing, and
+end-to-end latency minus it).
+
+The GPU is sampled every second in a background thread while the agent works:
 
     AMD, Linux        sysfs: mem_info_vram_used, gpu_busy_percent, hwmon power1_average
     NVIDIA            one long-running nvidia-smi --query-gpu ... -lms 1000 (Linux and Windows)
@@ -12,8 +29,9 @@ The result is a ``telemetry`` block in the task's result.json and one printed li
 measured is null, with the reason in ``reason``; never 0. Telemetry reads the model server and the GPU only, never
 the agent's process, and never changes a score.
 
-On a multi-GPU box the totals cover the GPUs the model server uses (found from its process: amdgpu fdinfo,
-nvidia-smi's compute apps, or the server's GPU engine counters), else every GPU; ``gpu_scope`` says which, and
+On a multi-GPU box the totals cover the GPUs the model server and its child processes use (amdgpu fdinfo, or KFD's
+per-process sysfs for a server in a ROCm container, whose root-owned fdinfo can't be read; nvidia-smi's compute
+apps; or the server's GPU engine counters), else every GPU; ``gpu_scope`` says which, and
 ``per_gpu`` has each GPU on its own.
 
     python tools/telemetry.py [SECONDS]     # sample for SECONDS (default 5) and print the block
@@ -42,9 +60,31 @@ import local_servers  # noqa: E402
 INTERVAL_S = 1.0
 GIB = 2**30
 CMD_TIMEOUT_S = 15
-PROMPT_TOKENS, PROMPT_SECONDS = "llamacpp:prompt_tokens_total", "llamacpp:prompt_seconds_total"
-OUT_TOKENS, OUT_SECONDS = "llamacpp:tokens_predicted_total", "llamacpp:tokens_predicted_seconds_total"
-COUNTERS = (PROMPT_TOKENS, PROMPT_SECONDS, OUT_TOKENS, OUT_SECONDS)
+#: Each server field: the /metrics counters whose deltas are added up, minus those marked "-". A metric with labels
+#: (vLLM's engine and model_name, SGLang's is_streaming and cache_source) is summed over its label sets; a histogram
+#: is read by its _sum. Names checked against vLLM 0.29.0 and SGLang 0.5.15.post1 and 0.5.23.
+SOURCES: Dict[str, Dict[str, Tuple[str, ...]]] = {
+    "llama-server": {"tokens_in": ("llamacpp:prompt_tokens_total",),
+                     "prefill_s": ("llamacpp:prompt_seconds_total",),
+                     "tokens_out": ("llamacpp:tokens_predicted_total",),
+                     "decode_s": ("llamacpp:tokens_predicted_seconds_total",)},
+    "vllm": {"tokens_in": ("vllm:prompt_tokens_total", "-vllm:prompt_tokens_cached_total"),
+             "prefill_s": ("vllm:request_prefill_time_seconds_sum",),
+             "tokens_out": ("vllm:generation_tokens_total",),
+             "decode_s": ("vllm:request_decode_time_seconds_sum",)},
+    "sglang": {"tokens_in": ("sglang:prompt_tokens_total", "-sglang:cached_tokens_total"),
+               "prefill_s": ("sglang:time_to_first_token_seconds_sum",),
+               "tokens_out": ("sglang:generation_tokens_total",),
+               "decode_s": ("sglang:e2e_request_latency_seconds_sum", "-sglang:time_to_first_token_seconds_sum")},
+}
+#: Prefix-cache hit counters: SGLang creates its counter on the first hit, so one that isn't there is 0.
+CACHE_HITS = ("vllm:prompt_tokens_cached_total", "sglang:cached_tokens_total")
+#: Why a running server may not answer /metrics.
+NO_METRICS = {"llama-server": "start it with --metrics", "sglang": "start it with --enable-metrics",
+              "vllm": "vLLM always serves it: it may still be loading, or its container maps another host port"}
+#: Asked for /metrics when no server process is listed; the metric names say which server answered.
+PROBE_PORTS = {"vllm": 8000, "sglang": 30000}
+METRIC_PREFIX = {"llamacpp": "llama-server", "vllm": "vllm", "sglang": "sglang"}
 WIN_COUNTERS = (r"\GPU Adapter Memory(*)\Dedicated Usage", r"\GPU Adapter Memory(*)\Shared Usage",
                 r"\GPU Engine(*)\Utilization Percentage")
 
@@ -74,64 +114,137 @@ def _run(cmd: Sequence[str]) -> str:
 
 # ---------------------------------------------------------------- the model server's counters
 
-def read_counters(port: int) -> Optional[Dict[str, float]]:
-    """llama-server's four token counters from /metrics, or None (no answer, or started without --metrics)."""
+def _names(kind: str) -> List[str]:
+    return [n.lstrip("-") for spec in SOURCES[kind].values() for n in spec]
+
+
+def totals(text: str) -> Dict[str, float]:
+    """Prometheus text as ``{metric name: value}``, each name summed over its label sets."""
+    found: Dict[str, float] = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        head, _, value = line.rpartition(" ")
+        name, v = re.split(r"[{\s]", head.strip(), maxsplit=1)[0], _num(value)
+        if name and v is not None and abs(v) != float("inf") and v == v:  # v == v: not NaN
+            found[name] = found.get(name, 0.0) + v
+    return found
+
+
+def metrics_kind(text: str) -> Optional[str]:
+    """Which server wrote this /metrics text, from its metric names."""
+    m = re.search(r"^(?:# (?:HELP|TYPE) )?(llamacpp|vllm|sglang):", text, re.M)
+    return METRIC_PREFIX[m.group(1)] if m else None
+
+
+def read_counters(port: int, kind: str = "llama-server") -> Optional[Dict[str, float]]:
+    """The counters SOURCES[kind] reads, from /metrics (a counter not created yet is left out), or None when
+    /metrics doesn't answer or isn't that server's."""
     text = engine_info.fetch(port, "/metrics")
-    found = engine_info.metrics(text) if text else {}
-    return {c: found[c] for c in COUNTERS} if all(c in found for c in COUNTERS) else None
+    if not text or metrics_kind(text) != kind:
+        return None
+    found = totals(text)
+    return {n: found[n] for n in _names(kind) if n in found}
+
+
+def probe() -> List[Tuple[Dict[str, Any], Dict[str, float]]]:
+    """vLLM or SGLang answering /metrics on its default port, with no process listed (Docker Desktop, no psutil)."""
+    found = []
+    for kind, port in PROBE_PORTS.items():
+        text = engine_info.fetch(port, "/metrics")
+        if text and metrics_kind(text) == kind:
+            model = re.search(r'model_name="([^"]+)"', text)
+            server = {"pid": None, "kind": kind, "name": None, "model": model.group(1) if model else None,
+                      "port": port, "path": ""}
+            found.append((server, {n: v for n, v in totals(text).items() if n in _names(kind)}))
+    return found
 
 
 def find_server(servers: Optional[List[Dict[str, Any]]] = None
                 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, float]], Optional[str]]:
-    """The llama-server to measure, its counters now, and why there is none."""
+    """The model server to measure, its counters now, and why there is none."""
     servers = local_servers.list_servers() if servers is None else servers
-    llama = [s for s in servers if s["kind"] == "llama-server" and s.get("port")]
-    if not llama:
-        others = sorted({s["kind"] for s in servers})
-        return None, None, "no llama-server running" + (
-            f" (found {', '.join(others)}; only llama-server's /metrics is read)" if others else "")
-    answering = [(s, c) for s in llama for c in [read_counters(s["port"])] if c is not None]
+    listed = [s for s in servers if s["kind"] in SOURCES and s.get("port")]
+    if listed:
+        answering = [(s, c) for s in listed for c in [read_counters(s["port"], s["kind"])] if c is not None]
+    else:
+        answering = probe()
+        if not answering:
+            others = sorted({s["kind"] for s in servers})
+            return None, None, "no llama-server, vLLM or SGLang running" + (
+                f" (found {', '.join(others)}, whose counters aren't read)" if others else "") + (
+                f"; nothing answers /metrics on ports {' or '.join(str(p) for p in PROBE_PORTS.values())}")
     if len(answering) == 1:
         return answering[0][0], answering[0][1], None
-    ports = ", ".join(str(s["port"]) for s in llama)
+    where = ", ".join(f"{s['kind']} port {s['port']}" for s in (listed or [s for s, _ in answering]))
     if not answering:
-        return llama[0] if len(llama) == 1 else None, None, (
-            f"llama-server (port {ports}) has no /metrics: start it with --metrics")
-    return None, None, f"several llama-servers answer /metrics (ports {ports}): can't tell which one the agent uses"
+        hints = "; ".join(dict.fromkeys(NO_METRICS[s["kind"]] for s in listed))
+        return listed[0] if len(listed) == 1 else None, None, f"{where}: no /metrics: {hints}"
+    return None, None, f"several servers answer /metrics ({where}): can't tell which one the agent uses"
 
 
 def server_block(server: Optional[Dict[str, Any]], before: Optional[Dict[str, float]],
                  after: Optional[Dict[str, float]], reason: Optional[str]) -> Dict[str, Any]:
     """Token counts and prefill/decode speed from two counter readings."""
-    out: Dict[str, Any] = {"kind": "llama-server" if server else None, "port": (server or {}).get("port"),
+    kind = (server or {}).get("kind")
+    out: Dict[str, Any] = {"kind": kind, "port": (server or {}).get("port"),
                            "model": Path(str(server["model"]).replace("\\", "/")).name
                            if server and server.get("model") else None,
                            "tokens_in": None, "tokens_out": None, "prefill_tok_s": None, "decode_tok_s": None,
                            "reason": reason}
     if reason:
         return out
-    if after is None:
+    if after is None or before is None or kind not in SOURCES:
         out["reason"] = "the server stopped answering /metrics during the task"
         return out
-    d = {c: after[c] - before[c] for c in COUNTERS}
-    if any(v < 0 for v in d.values()):
+    if any(after[n] < before[n] for n in after if n in before):
         out["reason"] = "the server's counters went down: it restarted during the task"
         return out
-    out["tokens_in"], out["tokens_out"] = int(d[PROMPT_TOKENS]), int(d[OUT_TOKENS])
-    why = []
-    if d[PROMPT_SECONDS] > 0:
-        out["prefill_tok_s"] = round(d[PROMPT_TOKENS] / d[PROMPT_SECONDS], 1)
-    else:
-        why.append("prefill: no prompt tokens processed")
-    if d[OUT_SECONDS] > 0:
-        out["decode_tok_s"] = round(d[OUT_TOKENS] / d[OUT_SECONDS], 1)
-    else:
-        why.append("decode: no tokens generated")
+    why: List[str] = []
+    d: Dict[str, Optional[float]] = {}
+
+    def delta(name: str) -> float:  # a labelled counter appears on its first increment: one not there yet is 0
+        return after.get(name, 0.0) - before.get(name, 0.0)
+
+    for field, spec in SOURCES[kind].items():
+        missing = [n.lstrip("-") for n in spec if n.lstrip("-") not in after and n.lstrip("-") not in CACHE_HITS]
+        if missing:
+            d[field] = None
+            why.append(f"{field}: the server has no {', '.join(missing)}")
+            continue
+        d[field] = sum(-delta(n[1:]) if n.startswith("-") else delta(n) for n in spec)
+    if d["tokens_in"] is not None:
+        out["tokens_in"] = int(round(d["tokens_in"]))
+    if d["tokens_out"] is not None:
+        out["tokens_out"] = int(round(d["tokens_out"]))
+    for name, tokens, secs, idle in (("prefill_tok_s", "tokens_in", "prefill_s", "prefill: no prompt tokens processed"),
+                                     ("decode_tok_s", "tokens_out", "decode_s", "decode: no tokens generated")):
+        if d[tokens] is None or d[secs] is None:
+            continue
+        if d[secs] > 0 and d[tokens] > 0:
+            out[name] = round(d[tokens] / d[secs], 1)
+        else:
+            why.append(idle)
     out["reason"] = "; ".join(why) or None
     return out
 
 
 # ---------------------------------------------------------------- GPU samplers
+
+def process_tree(pid: Optional[int]) -> set:
+    """The pid and its descendants: vLLM's engine core and SGLang's scheduler, which hold the GPU, are children of
+    the server process (psutil; without it, the pid alone)."""
+    if not pid:
+        return set()
+    pids = {pid}
+    try:
+        import psutil  # pylint: disable=import-outside-toplevel
+
+        pids.update(p.pid for p in psutil.Process(pid).children(recursive=True))
+    except Exception:  # noqa: BLE001 - psutil missing, or the process is gone
+        pass
+    return pids
+
 
 class Sampler:
     """Collects one (vram_gb, util_pct, power_w) per GPU per tick; a subclass fills ``gpus`` and ``series``."""
@@ -140,6 +253,7 @@ class Sampler:
 
     def __init__(self, server_pid: Optional[int] = None, interval_s: float = INTERVAL_S):
         self.server_pid = server_pid
+        self.server_pids = process_tree(server_pid)
         self.interval_s = interval_s
         self.gpus: Dict[str, str] = {}  # id -> name, in order
         self.series: Dict[str, List[Tuple[Optional[float], Optional[float], Optional[float]]]] = {}
@@ -180,14 +294,15 @@ class AmdSysfs(Sampler):
     vendor = "amd"
 
     def __init__(self, cards: List[Dict[str, Any]], server_pid: Optional[int] = None,
-                 interval_s: float = INTERVAL_S, proc_root: str = "/proc"):
+                 interval_s: float = INTERVAL_S, proc_root: str = "/proc", kfd_root: str = "/sys/class/kfd/kfd"):
         super().__init__(server_pid, interval_s)
         self.cards = cards
         self.gpus = {c["id"]: c["name"] for c in cards}
         if not any(c["power"] for c in cards):
             self.reasons["power"] = "no hwmon power1_average or power1_input"
         if server_pid:
-            used = self.used_pdevs(server_pid, proc_root)
+            used = set().union(*(self.used_pdevs(pid, proc_root) | self.kfd_pdevs(pid, kfd_root)
+                                 for pid in self.server_pids))
             self.in_use = [c["id"] for c in cards if c["id"] in used]
 
     @staticmethod
@@ -218,6 +333,23 @@ class AmdSysfs(Sampler):
             for line in (_read(f) or "").splitlines():
                 if line.startswith("drm-pdev:"):
                     found.add(line.split(":", 1)[1].strip())
+        return found
+
+    @staticmethod
+    def kfd_pdevs(pid: int, kfd_root: str = "/sys/class/kfd/kfd") -> set:
+        """PCI addresses of the GPUs a ROCm process uses, from /sys/class/kfd/kfd/proc/<pid>/vram_<gpu_id>. Anyone
+        can read it, unlike another user's fdinfo: a server in a Docker container runs as root."""
+        ids = {os.path.basename(f)[5:] for f in glob.glob(os.path.join(kfd_root, "proc", str(pid), "vram_*"))}
+        found = set()
+        for node in glob.glob(os.path.join(kfd_root, "topology", "nodes", "*")):
+            if (_read(os.path.join(node, "gpu_id")) or "") not in ids:
+                continue
+            props = dict(line.split(" ", 1) for line in (_read(os.path.join(node, "properties")) or "").splitlines()
+                         if " " in line)
+            loc, dom = _num(props.get("location_id")), _num(props.get("domain"))
+            if loc is not None and dom is not None:  # location_id is bus << 8 | device << 3 | function
+                loc = int(loc)
+                found.add(f"{int(dom):04x}:{loc >> 8:02x}:{(loc >> 3) & 0x1f:02x}.{loc & 7}")
         return found
 
     def sample(self) -> None:
@@ -298,7 +430,7 @@ class NvidiaSmi(Streaming):
         if server_pid:
             apps = _run(self.exe + ["--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader"])
             used = {uuids.get(r[1].strip()) for r in csv.reader(apps.splitlines())
-                    if len(r) >= 2 and r[0].strip() == str(server_pid)}
+                    if len(r) >= 2 and r[0].strip().isdigit() and int(r[0]) in self.server_pids}
             self.in_use = [i for i in self.gpus if i in used]
 
     def command(self) -> List[str]:
@@ -346,7 +478,7 @@ class WindowsCounters(Streaming):
             elif eng:
                 pid, luid_, phys, engine = eng.groups()
                 self.columns.append(("engine", luid_, (phys, engine)))
-                if self.server_pid and int(pid) == self.server_pid and luid_ not in self.in_use:
+                if int(pid) in self.server_pids and luid_ not in self.in_use:
                     self.in_use.append(luid_)
             else:
                 self.columns.append(("", "", None))
@@ -519,7 +651,8 @@ class Telemetry:
         except Exception as e:  # noqa: BLE001
             self.gpu_reason = f"GPU sampling did not stop cleanly: {type(e).__name__}: {e}"
         try:
-            after = read_counters(self.server["port"]) if self.server and self.before is not None else None
+            after = read_counters(self.server["port"], self.server["kind"]) \
+                if self.server and self.before is not None else None
             server = server_block(self.server, self.before, after, self.server_reason)
         except Exception as e:  # noqa: BLE001
             server = server_block(None, None, None, f"the server could not be read: {type(e).__name__}: {e}")

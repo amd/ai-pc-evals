@@ -25,6 +25,46 @@ def test_a_server_is_parsed_from_its_command_line():
     assert local_servers.describe(15, "notepad.exe", ["notepad"]) is None
 
 
+# Process names and command lines as psutil sees the serving skill's containers from the host (vLLM 0.29.0 in
+# rocm/vllm and vllm/vllm-openai, SGLang 0.5.23 in lmsysorg/sglang). The GPU workers rename themselves.
+VLLM_SERVE = ["/usr/bin/python3", "/usr/local/bin/vllm", "serve", "Qwen/Qwen3-0.6B", "--served-model-name",
+              "qwen3-0.6b", "--max-model-len", "40960", "--host", "0.0.0.0", "--port", "8000",
+              "--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
+SGLANG_SERVE = ["python3", "-m", "sglang.launch_server", "--model-path", "Qwen/Qwen3-0.6B", "--served-model-name",
+                "qwen3-0.6b", "--context-length", "40960", "--host", "0.0.0.0", "--port", "30000",
+                "--tool-call-parser", "qwen25", "--enable-metrics"]
+CONTAINERS = [(117955, "vllm", VLLM_SERVE), (118388, "VLLM::EngineCore", ["VLLM::EngineCore" + " " * 40]),
+              (120917, "python3", SGLANG_SERVE),
+              (121240, "python3", ["/opt/sglang/bin/python3", "-c",
+                                   "from multiprocessing.resource_tracker import main;main(22)"]),
+              (121241, "sglang::scheduler", ["sglang::scheduler" + " " * 40])]
+
+
+def test_vllm_and_sglang_are_told_by_their_command_line():
+    s = local_servers.describe(*CONTAINERS[0])
+    assert (s["kind"], s["model"], s["port"]) == ("vllm", "Qwen/Qwen3-0.6B", 8000)
+    s = local_servers.describe(*CONTAINERS[2])
+    assert (s["kind"], s["model"], s["port"]) == ("sglang", "Qwen/Qwen3-0.6B", 30000)
+    s = local_servers.describe(21, "python3", ["python3", "-m", "vllm.entrypoints.openai.api_server", "--model", "m"])
+    assert (s["kind"], s["model"], s["port"]) == ("vllm", "m", 8000)
+    assert local_servers.describe(23, "python3", ["python3", "-m", "sglang.launch_server", "--port", "30001"])[
+        "port"] == 30001
+    assert local_servers.describe(24, "vllm", ["/usr/local/bin/vllm", "bench", "serve"]) is None  # a client
+    assert local_servers.describe(25, "python3", ["python3", "train.py"]) is None
+
+
+def test_container_workers_are_not_listed_as_servers(monkeypatch):
+    class Proc:
+        def __init__(self, pid, name, args):
+            self.info, self.args = {"pid": pid, "name": name}, args
+
+        def cmdline(self):
+            return self.args
+    fake = types.SimpleNamespace(Error=Exception, process_iter=lambda attrs: [Proc(*c) for c in CONTAINERS])
+    monkeypatch.setitem(sys.modules, "psutil", fake)
+    assert [(s["pid"], s["kind"]) for s in local_servers.list_servers()] == [(117955, "vllm"), (120917, "sglang")]
+
+
 def test_listing_uses_psutil_and_reads_only_candidates_command_lines(monkeypatch):
     read = []
 

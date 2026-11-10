@@ -45,8 +45,9 @@ def test_no_metrics_or_no_server_is_null_with_a_reason_never_zero(monkeypatch):
     block = telemetry.server_block(server, before, None, why)
     assert block["tokens_in"] is None and block["decode_tok_s"] is None and "--metrics" in block["reason"]
     _, _, why = telemetry.find_server([{**SERVER, "kind": "ollama", "port": 11434}])
-    assert why.startswith("no llama-server running") and "ollama" in why
-    assert telemetry.find_server([])[2] == "no llama-server running"
+    assert why.startswith("no llama-server, vLLM or SGLang running") and "ollama" in why
+    assert telemetry.find_server([])[2] == ("no llama-server, vLLM or SGLang running; "
+                                            "nothing answers /metrics on ports 8000 or 30000")
 
 
 def test_two_answering_servers_are_not_guessed_between(monkeypatch):
@@ -59,13 +60,157 @@ def test_two_answering_servers_are_not_guessed_between(monkeypatch):
 
 
 def test_idle_task_and_restarted_server():
-    a = {c: 10.0 for c in telemetry.COUNTERS}
+    a = {n: 10.0 for n in telemetry._names("llama-server")}
     idle = telemetry.server_block(SERVER, a, dict(a), None)
     assert idle["tokens_out"] == 0 and idle["decode_tok_s"] is None and "no tokens generated" in idle["reason"]
-    restarted = telemetry.server_block(SERVER, a, {c: 1.0 for c in telemetry.COUNTERS}, None)
+    restarted = telemetry.server_block(SERVER, a, {n: 1.0 for n in a}, None)
     assert restarted["tokens_in"] is None and "restarted" in restarted["reason"]
     gone = telemetry.server_block(SERVER, a, None, None)
     assert gone["tokens_in"] is None and "stopped answering" in gone["reason"]
+
+
+# /metrics captured from live servers serving Qwen3-0.6B, trimmed to the counters SOURCES reads, before and after six
+# streamed chat requests sharing a 2.5k-token system prompt (so five of them hit the prefix cache).
+# vLLM 0.29.0, rocm/vllm container, Radeon AI PRO R9700:
+VLLM_BEFORE = """# HELP vllm:prompt_tokens_total Number of prefill tokens processed.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{engine="0",model_name="qwen3-0.6b"} 156.0
+# HELP vllm:prompt_tokens_cached_total Number of cached prompt tokens (local + external).
+# TYPE vllm:prompt_tokens_cached_total counter
+vllm:prompt_tokens_cached_total{engine="0",model_name="qwen3-0.6b"} 0.0
+# HELP vllm:generation_tokens_total Number of generation tokens processed.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{engine="0",model_name="qwen3-0.6b"} 112.0
+vllm:request_prefill_time_seconds_count{engine="0",model_name="qwen3-0.6b"} 1.0
+vllm:request_prefill_time_seconds_sum{engine="0",model_name="qwen3-0.6b"} 0.017304164997767657
+vllm:request_decode_time_seconds_count{engine="0",model_name="qwen3-0.6b"} 1.0
+vllm:request_decode_time_seconds_sum{engine="0",model_name="qwen3-0.6b"} 0.7035562590463087
+"""
+VLLM_AFTER = """# HELP vllm:prompt_tokens_total Number of prefill tokens processed.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{engine="0",model_name="qwen3-0.6b"} 15222.0
+# HELP vllm:prompt_tokens_cached_total Number of cached prompt tokens (local + external).
+# TYPE vllm:prompt_tokens_cached_total counter
+vllm:prompt_tokens_cached_total{engine="0",model_name="qwen3-0.6b"} 12480.0
+# HELP vllm:generation_tokens_total Number of generation tokens processed.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{engine="0",model_name="qwen3-0.6b"} 1554.0
+vllm:request_prefill_time_seconds_count{engine="0",model_name="qwen3-0.6b"} 7.0
+vllm:request_prefill_time_seconds_sum{engine="0",model_name="qwen3-0.6b"} 0.21065197995631024
+vllm:request_decode_time_seconds_count{engine="0",model_name="qwen3-0.6b"} 7.0
+vllm:request_decode_time_seconds_sum{engine="0",model_name="qwen3-0.6b"} 14.646517580084037
+"""
+# SGLang 0.5.23, lmsysorg/sglang container, RTX 4080 SUPER. cached_tokens_total appears on the first cache hit.
+SGLANG_BEFORE = """# HELP sglang:prompt_tokens_total Number of prefill tokens processed.
+# TYPE sglang:prompt_tokens_total counter
+sglang:prompt_tokens_total{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 167.0
+# HELP sglang:generation_tokens_total Number of generation tokens processed.
+# TYPE sglang:generation_tokens_total counter
+sglang:generation_tokens_total{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 115.0
+sglang:time_to_first_token_seconds_sum{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 5.810334406647598
+sglang:time_to_first_token_seconds_count{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 2.0
+sglang:e2e_request_latency_seconds_sum{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 6.365259524987778
+sglang:e2e_request_latency_seconds_count{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 2.0
+"""
+SGLANG_AFTER = """# HELP sglang:prompt_tokens_total Number of prefill tokens processed.
+# TYPE sglang:prompt_tokens_total counter
+sglang:prompt_tokens_total{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 167.0
+sglang:prompt_tokens_total{engine_type="unified",is_streaming="true",model_name="qwen3-0.6b"} 15066.0
+# HELP sglang:generation_tokens_total Number of generation tokens processed.
+# TYPE sglang:generation_tokens_total counter
+sglang:generation_tokens_total{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 115.0
+sglang:generation_tokens_total{engine_type="unified",is_streaming="true",model_name="qwen3-0.6b"} 1445.0
+# HELP sglang:cached_tokens_total Number of cached prompt tokens by source (device/host/storage).
+# TYPE sglang:cached_tokens_total counter
+sglang:cached_tokens_total{cache_source="device",engine_type="unified",model_name="qwen3-0.6b"} 12503.0
+sglang:time_to_first_token_seconds_sum{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 5.810334406647598
+sglang:time_to_first_token_seconds_count{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 2.0
+sglang:time_to_first_token_seconds_sum{engine_type="unified",is_streaming="true",model_name="qwen3-0.6b"} 0.15304387001378927
+sglang:time_to_first_token_seconds_count{engine_type="unified",is_streaming="true",model_name="qwen3-0.6b"} 6.0
+sglang:e2e_request_latency_seconds_sum{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 6.365259524987778
+sglang:e2e_request_latency_seconds_count{engine_type="unified",is_streaming="false",model_name="qwen3-0.6b"} 2.0
+sglang:e2e_request_latency_seconds_sum{engine_type="unified",is_streaming="true",model_name="qwen3-0.6b"} 3.9637006180128083
+sglang:e2e_request_latency_seconds_count{engine_type="unified",is_streaming="true",model_name="qwen3-0.6b"} 6.0
+"""
+# A server that has served nothing yet: its labelled counters have no samples.
+SGLANG_EMPTY = "".join(x + "\n" for x in SGLANG_BEFORE.splitlines() if x.startswith("#"))
+VLLM_PROC = {"pid": 117955, "kind": "vllm", "name": "vllm", "model": "Qwen/Qwen3-0.6B", "port": 8000,
+             "path": "/usr/bin/python3"}
+SGLANG_PROC = {"pid": 120917, "kind": "sglang", "name": "python3", "model": "Qwen/Qwen3-0.6B", "port": 30000,
+               "path": "python3"}
+
+
+def test_vllm_counts_computed_prompt_tokens_and_reads_its_phase_histograms(monkeypatch):
+    fake_metrics(monkeypatch, {8000: [VLLM_BEFORE, VLLM_AFTER]})
+    server, before, why = telemetry.find_server([VLLM_PROC])
+    assert why is None
+    block = telemetry.server_block(server, before, telemetry.read_counters(8000, "vllm"), None)
+    # 15066 prompt tokens, 12480 of them prefix-cache hits; the same as the requests' usage and the server's
+    # prompt_tokens_by_source{source="local_compute"}. The speeds match the client's: decode 103.5 tok/s.
+    assert block == {"kind": "vllm", "port": 8000, "model": "Qwen3-0.6B", "tokens_in": 2586, "tokens_out": 1442,
+                     "prefill_tok_s": 13374.9, "decode_tok_s": 103.4, "reason": None}
+
+
+def test_sglang_sums_label_sets_and_a_cache_counter_not_there_yet_is_zero(monkeypatch):
+    fake_metrics(monkeypatch, {30000: [SGLANG_BEFORE, SGLANG_AFTER]})
+    server, before, why = telemetry.find_server([SGLANG_PROC])
+    assert why is None and "sglang:cached_tokens_total" not in before
+    block = telemetry.server_block(server, before, telemetry.read_counters(30000, "sglang"), None)
+    # 15066 - 12503 cached; the server's own realtime_tokens_total{mode="prefill_compute"} rose by the same 2563.
+    assert (block["kind"], block["tokens_in"], block["tokens_out"]) == ("sglang", 2563, 1445)
+    assert (block["prefill_tok_s"], block["decode_tok_s"], block["reason"]) == (16746.8, 379.2, None)
+
+
+def test_sglang_counters_created_during_the_task_start_at_zero(monkeypatch):
+    fake_metrics(monkeypatch, {30000: [SGLANG_EMPTY, SGLANG_AFTER]})
+    server, before, why = telemetry.find_server([SGLANG_PROC])
+    assert why is None and before == {}
+    block = telemetry.server_block(server, before, telemetry.read_counters(30000, "sglang"), None)
+    assert (block["tokens_in"], block["tokens_out"], block["reason"]) == (15233 - 12503, 1560, None)
+
+
+def test_sglang_without_enable_metrics_names_the_flag(monkeypatch):
+    fake_metrics(monkeypatch, {30000: None})
+    server, before, why = telemetry.find_server([SGLANG_PROC])
+    assert server["kind"] == "sglang" and before is None
+    assert why == "sglang port 30000: no /metrics: start it with --enable-metrics"
+    block = telemetry.server_block(server, before, None, why)
+    assert block["kind"] == "sglang" and block["tokens_in"] is None and "--enable-metrics" in block["reason"]
+
+
+def test_a_missing_counter_is_null_with_its_name(monkeypatch):
+    no_e2e = "".join(x + "\n" for x in SGLANG_AFTER.splitlines() if "e2e" not in x)
+    fake_metrics(monkeypatch, {30000: [SGLANG_BEFORE, no_e2e]})
+    server, before, _ = telemetry.find_server([SGLANG_PROC])
+    block = telemetry.server_block(server, before, telemetry.read_counters(30000, "sglang"), None)
+    assert block["tokens_out"] == 1445 and block["decode_tok_s"] is None
+    assert "decode_s: the server has no sglang:e2e_request_latency_seconds_sum" in block["reason"]
+
+
+def test_with_no_process_listed_the_default_ports_are_asked(monkeypatch):
+    fake_metrics(monkeypatch, {8000: VLLM_AFTER, 30000: None})
+    server, before, why = telemetry.find_server([])  # vLLM in Docker Desktop: no process to see
+    assert why is None and (server["kind"], server["port"], server["pid"], server["model"]) == (
+        "vllm", 8000, None, "qwen3-0.6b")
+    assert before["vllm:prompt_tokens_total"] == 15222.0
+    fake_metrics(monkeypatch, {8000: METRICS.format(pt=1, ps=1, ot=1, os_=1), 30000: None})  # not vLLM's
+    assert telemetry.find_server([])[0] is None
+
+
+def test_gpu_scope_includes_the_servers_child_processes(monkeypatch):
+    import types
+
+    class Proc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def children(self, recursive):
+            return [Proc(901), Proc(902)] if recursive else [Proc(901)]
+    monkeypatch.setitem(sys.modules, "psutil", types.SimpleNamespace(Process=Proc))
+    assert telemetry.process_tree(900) == {900, 901, 902}
+    assert telemetry.process_tree(None) == set()
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    assert telemetry.process_tree(900) == {900}
 
 
 def make_card(root, n, pci, vram, busy, power_uw=None, vendor="0x1002"):
@@ -106,6 +251,26 @@ def test_amd_sysfs_samples_the_gpu_the_server_has_open(tmp_path):
     assert g["samples"] >= 3 and g["vram_peak_gb"] == 24.0 and 22.0 < g["vram_mean_gb"] < 24.0
     assert 70 < g["util_mean_pct"] < 90 and g["power_mean_w"] == 210.0 and g["reason"] is None
     assert [p["in_scope"] for p in g["per_gpu"]] == [False, True]
+
+
+def test_amd_gpu_of_a_root_process_comes_from_kfd(tmp_path):
+    # vLLM in a ROCm container: its engine core (a child of the server) runs as root, so its fdinfo is unreadable;
+    # KFD's per-process sysfs is not. Node and location_id as on the R9700 box (0xe300 = bus e3).
+    make_card(tmp_path, 0, "0000:0c:00.0", 0, 0)
+    make_card(tmp_path, 1, "0000:e3:00.0", 0, 0)
+    kfd = tmp_path / "kfd"
+    for n, gpu_id, loc in ((0, "0", 0), (1, "38502", 58112), (2, "4410", 3072)):
+        (kfd / "topology" / "nodes" / str(n)).mkdir(parents=True)
+        (kfd / "topology" / "nodes" / str(n) / "gpu_id").write_text(gpu_id + "\n")
+        (kfd / "topology" / "nodes" / str(n) / "properties").write_text(f"cpu_cores_count 0\nlocation_id {loc}\n"
+                                                                         "domain 0\n")
+    (kfd / "proc" / "1545046").mkdir(parents=True)
+    (kfd / "proc" / "1545046" / "vram_38502").write_text("28847173632\n")
+    assert telemetry.AmdSysfs.kfd_pdevs(1545046, str(kfd)) == {"0000:e3:00.0"}
+    assert telemetry.AmdSysfs.kfd_pdevs(1, str(kfd)) == set()
+    s = telemetry.AmdSysfs(telemetry.AmdSysfs.find(str(tmp_path / "drm")), server_pid=1545046,
+                           proc_root=str(tmp_path / "proc"), kfd_root=str(kfd))
+    assert s.in_use == ["0000:e3:00.0"]
 
 
 def test_amd_sysfs_without_power_says_why(tmp_path):
