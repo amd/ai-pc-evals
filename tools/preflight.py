@@ -264,6 +264,22 @@ def _entries(directory: Path) -> Iterator[os.DirEntry]:
         return
 
 
+#: What a virtual environment installs into: skipped in a real one (_is_venv).
+VENV_PACKAGE_DIRS = frozenset({"bin", "Scripts", "lib", "lib64", "Lib", "include", "Include", "share"})
+
+
+def _is_venv(folder: Path) -> bool:
+    """A Python virtual environment: its pyvenv.cfg names the base Python (``home =``), and it has its own
+    interpreter. A pyvenv.cfg dropped into a folder alone doesn't make it one."""
+    try:
+        cfg = (folder / "pyvenv.cfg").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if not re.search(r"^\s*home\s*=", cfg, re.MULTILINE):
+        return False
+    return (folder / "Scripts" / "python.exe").is_file() or any((folder / "bin").glob("python*"))
+
+
 def walk_files(roots: Sequence[Path], skip: Sequence[Path], deadline: float, seen: Set[str],
                max_bytes: int = MAX_SWEEP_BYTES) -> Iterator[Path]:
     """Files under *roots*, depth first, skipping caches, links and *skip*; stops at *deadline*. Files over
@@ -278,12 +294,16 @@ def walk_files(roots: Sequence[Path], skip: Sequence[Path], deadline: float, see
             continue
         seen.add(key)
         subdirs = []
+        # A Python virtual environment of any name, like "venv" and ".venv" above: installed packages (a minified
+        # JS bundle in share/jupyter) share enough 10-word runs with a key to look like one. Only a real one (its
+        # pyvenv.cfg and its interpreter), and only its package folders: anything else in it is still swept.
+        venv = _is_venv(d)
         for entry in _entries(d):
             try:
                 if entry.is_symlink() or (hasattr(entry, "is_junction") and entry.is_junction()):
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    if entry.name not in SKIP_DIR_NAMES:
+                    if entry.name not in SKIP_DIR_NAMES and not (venv and entry.name in VENV_PACKAGE_DIRS):
                         subdirs.append(Path(entry.path))
                 elif entry.is_file(follow_symlinks=False):
                     st = entry.stat(follow_symlinks=False)
@@ -355,6 +375,22 @@ def classify(path: Path, matcher: fp.Matcher, max_bytes: int = MAX_SWEEP_BYTES,
     return None
 
 
+def _windows() -> bool:
+    """isolation.WINDOWS, the one OS check (tests switch it); os.name when this file runs alone."""
+    try:
+        import isolation  # noqa: PLC0415
+    except ImportError:
+        return os.name == "nt"
+    return isolation.WINDOWS
+
+
+def _layer4_doc(step: str = "") -> str:
+    """Where this OS's Layer 4 setup is (isolation.setup_doc; this file also runs alone)."""
+    if _windows():
+        return "secrets/README.md, Layer 4" + (f", step {step}" if step else "")
+    return "docs/SECURITY.md, Layer 4 on Linux"
+
+
 def _agent_user(env: dict) -> str:
     """``KW_AGENT_USER``, checked by tools/isolation.py; "" when unset (or when isolation.py isn't beside this file)."""
     if not (env.get("KW_AGENT_USER") or "").strip():
@@ -378,9 +414,10 @@ def _check_kept_out(path: Path, user: str, warnings: List[str]) -> List[Finding]
     """A maintainer-only path --strict doesn't sweep: with ``KW_AGENT_USER``, its ACL must keep that user out."""
     if not user:
         warnings.append(f"not swept: {path} (maintainer-only by design; only Layer 4 keeps an agent out of it: "
-                        "set KW_AGENT_USER and deny that user read, secrets/README.md, Layer 4)")
+                        f"set KW_AGENT_USER and deny that user read, {_layer4_doc()})")
         return []
-    deny = f'icacls "{path}" /deny "{user}:{"(OI)(CI)" if path.is_dir() else ""}R"'
+    deny = (f'setfacl -m "u:{user}:---" "{path}"' if not _windows()
+            else f'icacls "{path}" /deny "{user}:{"(OI)(CI)" if path.is_dir() else ""}R"')
     readable = _can_read(path, user)
     if readable is False:
         warnings.append(f"not swept: {path} (maintainer-only by design; its ACL keeps {user} from reading it)")
@@ -388,9 +425,10 @@ def _check_kept_out(path: Path, user: str, warnings: List[str]) -> List[Finding]
     if readable is None:
         return [Finding(str(path), f"maintainer-only (it matches the answers by design) and its ACL doesn't deny "
                         f"{user} by name (or couldn't be read), so nothing confirms {user} is kept out",
-                        f"{deny}   # then verify: secrets/README.md, Layer 4, step 5")]
+                        f"{deny}   # then verify: {_layer4_doc('5')}")]
+    where = "from an elevated prompt: " if _windows() else ""
     return [Finding(str(path), f"maintainer-only (it matches the answers by design), yet its ACL lets {user} read it",
-                    f"{deny}   # from an elevated prompt: secrets/README.md, Layer 4, step 3")]
+                    f"{deny}   # {where}{_layer4_doc('3')}")]
 
 
 def list_servers(report: Report) -> None:
@@ -438,7 +476,7 @@ def run(
         try:
             agent_user = _agent_user(env)
         except OSError as e:
-            report.failures.append(Finding("KW_AGENT_USER", str(e), "secrets/README.md, Layer 4, step 1"))
+            report.failures.append(Finding("KW_AGENT_USER", str(e), _layer4_doc("1")))
         for p in maintainer_only:
             report.failures += _check_kept_out(p, agent_user, report.warnings)
     else:

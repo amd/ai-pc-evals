@@ -34,13 +34,15 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from render import find_chrome
+
 REPO = Path(__file__).resolve().parents[1]
 PACKS = REPO / "knowledgework" / "portable" / "packs.json"
 #: The committed lock. KW_SNAPSHOT_LOCK points at another one for development packs (stand-ins for
 #: pages not saved yet); every result then says DEV SNAPSHOTS and is not comparable.
 LOCK = Path(os.environ.get("KW_SNAPSHOT_LOCK") or REPO / "knowledgework" / "portable" / "snapshots.lock.json")
 ROOT = Path(os.environ.get("KW_SNAPSHOTS") or Path.home() / ".kw-eval" / "cache" / "snapshots")
-CHROME = os.environ.get("CHROME_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+CHROME = find_chrome()
 UA = "ai-pc-evals/1.0 (+https://github.com/amd/ai-pc-evals)"
 TIMEOUT_S = 120
 
