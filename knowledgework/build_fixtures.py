@@ -655,6 +655,8 @@ def normalize_ooxml(path: Path) -> None:
                 data = _CORE_DATE.sub(rb"\g<1>2026-10-05T09:00:00Z\g<2>", data)
             info = zipfile.ZipInfo(name, FIXED_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 0  # CPython writes 0 on Windows and 3 elsewhere: pin it so every OS builds the same bytes
+
             zout.writestr(info, data)
     tmp.replace(path)
 

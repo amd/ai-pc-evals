@@ -190,6 +190,8 @@ def preflight() -> None:
         strict = ["--strict"] if os.environ.get("KW_PREFLIGHT_STRICT", "").lower() in ("1", "true", "yes") else []
         # Its own time box (300 s) unless KW_PREFLIGHT_SECONDS says otherwise: a home folder takes minutes.
         limit = ["--time-limit", os.environ["KW_PREFLIGHT_SECONDS"]] if os.environ.get("KW_PREFLIGHT_SECONDS") else []
+        # Its output only arrives when it ends: say so first, or a manual run looks frozen for minutes.
+        print("  preflight: running (can take a minute or two)...", flush=True)
         out = harness(str(HERE / "preflight.py"), "--sanctioned", str(graded_home()), *limit, *strict)
         for line in out.splitlines():  # warnings (other model servers, folders not swept) and the summary
             if line.startswith(("warn ", "preflight:", "memory:")):
