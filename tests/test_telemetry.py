@@ -345,10 +345,12 @@ def test_telemetry_never_raises_and_stops_once(monkeypatch):
         raise RuntimeError("no processes")
     monkeypatch.setattr(telemetry.local_servers, "list_servers", boom)
     monkeypatch.setattr(telemetry, "pick_sampler", boom)
+    monkeypatch.setattr(telemetry, "read_faults", boom)
     tel = telemetry.Telemetry().start()
     block = tel.stop()
     assert block["server"]["tokens_in"] is None and "no processes" in block["server"]["reason"]
     assert block["gpu"]["vram_peak_gb"] is None and "no processes" in block["gpu"]["reason"]
+    assert block["faults"]["resets"] is None and block["faults"]["reason"].startswith("not measured")
     assert tel.stop() is block
 
 
@@ -360,6 +362,118 @@ def test_line():
     block["gpu"]["power_mean_w"] = 210.2
     assert telemetry.line(block) == ("telemetry: prefill n/a tok/s, decode n/a tok/s, peak VRAM 22.4 GB, util 71%, "
                                      "210 W (no llama-server running)")
+
+
+J = "2026-11-10T14:03:21+0000 user-hassan kernel: "
+AMD_LOG = [J + "amdgpu 0000:03:00.0: amdgpu: [gfxhub] page fault (src_id:0 ring:24 vmid:9 pasid:32771)",
+           J + "amdgpu 0000:03:00.0: amdgpu:  in process llama-server pid 4321 thread llama-server pid 4321",
+           J + "amdgpu 0000:03:00.0: amdgpu:   in page starting at address 0x00007f1a2b400000 from client 10",
+           J + "amdgpu 0000:03:00.0: amdgpu: GCVM_L2_PROTECTION_FAULT_STATUS:0x00941051",
+           J + "amdgpu 0000:03:00.0: amdgpu: \t Faulty UTCL2 client ID: TCP (0x8)",
+           J + "[drm:amdgpu_job_timedout [amdgpu]] *ERROR* ring gfx_0.0.0 timeout, signaled seq=1234, emitted seq=1236",
+           J + "amdgpu 0000:03:00.0: amdgpu: GPU reset begin!",
+           J + "amdgpu 0000:03:00.0: amdgpu: MODE1 reset",
+           J + "amdgpu 0000:03:00.0: amdgpu: GPU reset(2) succeeded!",
+           J + "amdgpu 0000:03:00.0: amdgpu: ring gfx_0.0.0 uses VM inv eng 0 on hub 0"]
+N = "2026-11-10T14:05:00+0000 taccuser-4080 kernel: "
+NV_LOG = [N + "NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  615.71.10",
+          N + "NVRM: Xid (PCI:0000:01:00): 31, pid=2481, name=llama-server, Ch 00000018, intr 00000000. MMU Fault: "
+              "ENGINE GRAPHICS GPCCLIENT_T1_0 faulted @ 0x7f12_34560000. Fault is of type FAULT_PDE ACCESS_TYPE_VIRT_READ",
+          N + "NVRM: Xid (PCI:0000:01:00): 13, pid=2481, name=llama-server, Graphics SM Warp Exception on "
+              "(GPC 0, TPC 0, SM 0): Out Of Range Address",
+          N + "NVRM: Xid (PCI:0000:01:00): 79, pid=2481, name=llama-server, GPU has fallen off the bus.",
+          N + "NVRM: GPU 0000:01:00.0: GPU has fallen off the bus."]
+WIN_OUT = """EVENT|2026-11-10T09:12:01|4101|Display|Display driver amdkmdag stopped responding and has successfully recovered.
+EVENT|2026-11-10T09:12:04|46|amdkmdag|Display driver amdkmdag failed to reset the GPU.
+EVENT|2026-11-10T09:12:05|13|nvlddmkm|\\Device\\Video3 Xid 31, MMU Fault: ENGINE GRAPHICS faulted @ 0x1_23450000
+EVENT|2026-11-10T09:12:06|153|nvlddmkm|Error occurred on GPUID: 100
+FAULTLOG_OK
+"""
+
+
+def fake_logs(monkeypatch, platform, answers):
+    """sys.platform set, and each command (by its first word) answered with (exit code, stdout, stderr)."""
+    seen = []
+
+    def run(cmd, timeout=0):
+        seen.append(cmd)
+        return answers.get(cmd[0], (None, "", "not installed"))
+    monkeypatch.setattr(telemetry.sys, "platform", platform)
+    monkeypatch.setattr(telemetry, "_run_rc", run)
+    return seen
+
+
+def test_faults_amd_kernel_log_counts_events_not_lines(monkeypatch):
+    seen = fake_logs(monkeypatch, "linux", {"journalctl": (0, "\n".join(AMD_LOG) + "\n", "")})
+    f = telemetry.read_faults(1_800_000_000.4, 1_800_000_060.2)
+    assert seen[0][:6] == ["journalctl", "-k", "--no-pager", "-o", "short-iso", "--since"]
+    assert seen[0][6:] == ["@1800000000", "--until", "@1800000061"] and len(seen) == 1
+    assert (f["resets"], f["page_faults"], f["timeouts"], f["other"]) == (1, 1, 1, 0)
+    assert f["source"] == "journalctl -k" and f["reason"] is None and f["xids"] == []
+    assert len(f["lines"]) == 5 and "page fault" in f["lines"][0] and all(len(x) <= 200 for x in f["lines"])
+    # a page fault logged without its headline line still counts, once per PROTECTION_FAULT line
+    f = telemetry.fault_block(telemetry.kernel_hits([AMD_LOG[3]]), "dmesg")
+    assert (f["resets"], f["page_faults"], f["timeouts"], f["other"]) == (0, 1, 0, 0)
+
+
+def test_faults_nvidia_xids(monkeypatch):
+    fake_logs(monkeypatch, "linux", {"journalctl": (0, "\n".join(NV_LOG) + "\n-- No entries --\n", "")})
+    f = telemetry.read_faults(0, 1)
+    assert (f["resets"], f["page_faults"], f["timeouts"], f["other"]) == (1, 1, 0, 1)
+    assert f["xids"] == [31, 13, 79] and len(f["lines"]) == 3
+
+
+def test_faults_journal_denied_falls_back_to_dmesg(monkeypatch):
+    hint = "Hint: You are currently not seeing messages from other users and the system.\n"
+    dmesg = ("2026-11-10T14:03:20,999999+00:00 amdgpu 0000:03:00.0: amdgpu: GPU reset begin!\n"
+             "2026-11-10T14:03:30,000001+00:00 amdgpu 0000:03:00.0: amdgpu: GPU reset begin!\n"
+             "2026-11-10T15:00:00,000000+00:00 amdgpu 0000:03:00.0: amdgpu: GPU reset begin!\n")
+    start = telemetry.datetime.fromisoformat("2026-11-10T14:03:25+00:00").timestamp()
+    fake_logs(monkeypatch, "linux", {"journalctl": (0, "-- No entries --\n", hint), "dmesg": (0, dmesg, "")})
+    f = telemetry.read_faults(start, start + 60)
+    assert f["source"] == "dmesg" and f["resets"] == 1 and f["reason"] is None
+
+
+def test_faults_unreadable_log_is_null_with_a_reason(monkeypatch):
+    fake_logs(monkeypatch, "linux", {"journalctl": (0, "", "Hint: You are currently not seeing messages from other "
+                                                          "users and the system."),
+                                     "dmesg": (1, "", "dmesg: read kernel buffer failed: Operation not permitted\n")})
+    f = telemetry.read_faults(0, 1)
+    assert [f[k] for k in telemetry.FAULT_KINDS] == [None] * 4 and f["source"] is None
+    assert f["reason"] == ("not measured: journalctl -k: no access to the system journal (needs the adm or "
+                           "systemd-journal group); dmesg: read kernel buffer failed: Operation not permitted")
+    fake_logs(monkeypatch, "win32", {"powershell": (0, "FAULTLOG_ERROR Attempted to perform an unauthorized "
+                                                       "operation.\n", "")})
+    f = telemetry.read_faults(0, 1)
+    assert f["resets"] is None and f["reason"] == ("not measured: the System event log could not be read: "
+                                                   "Attempted to perform an unauthorized operation.")
+    fake_logs(monkeypatch, "darwin", {})
+    assert telemetry.read_faults(0, 1)["reason"] == "not measured: no GPU fault log reader for darwin"
+
+
+def test_faults_windows_system_log(monkeypatch):
+    seen = fake_logs(monkeypatch, "win32", {"powershell": (0, WIN_OUT, "")})
+    f = telemetry.read_faults(1_800_000_000.0, 1_800_000_060.0)
+    script = telemetry.base64.b64decode(seen[0][-1]).decode("utf-16-le")
+    assert "FromUnixTimeMilliseconds(1800000000000)" in script and "FromUnixTimeMilliseconds(1800000061000)" in script
+    assert (f["resets"], f["page_faults"], f["timeouts"], f["other"]) == (1, 1, 1, 1)
+    assert f["xids"] == [31] and f["source"] == "windows-system-log"
+    assert f["lines"][0] == ("2026-11-10T09:12:01 Display 4101: Display driver amdkmdag stopped responding and has "
+                             "successfully recovered.")
+    fake_logs(monkeypatch, "win32", {"powershell": (0, "FAULTLOG_OK\n", "")})
+    assert telemetry.read_faults(0, 1)["resets"] == 0
+
+
+def test_line_shows_faults_only_when_there_are_some_or_unmeasured():
+    block = {"server": {"prefill_tok_s": 912.4, "decode_tok_s": 24.31, "reason": None},
+             "gpu": {"vram_peak_gb": 22.43, "util_mean_pct": 71.2, "power_mean_w": None, "reason": None},
+             "faults": telemetry.fault_block([], "journalctl -k")}
+    plain = "telemetry: prefill 912 tok/s, decode 24.3 tok/s, peak VRAM 22.4 GB, util 71%"
+    assert telemetry.line(block) == plain
+    block["faults"] = telemetry.fault_block(telemetry.kernel_hits(AMD_LOG + NV_LOG), "journalctl -k")
+    assert telemetry.line(block) == plain + ", GPU faults: 2 resets, 2 page faults, 1 timeout, 1 other"
+    block["faults"] = telemetry.fault_block([], None, "not measured: dmesg: not installed")
+    assert telemetry.line(block) == plain + ", GPU faults n/a (not measured: dmesg: not installed)"
 
 
 def test_run_eval_has_the_flag_off_by_default():

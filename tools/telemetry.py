@@ -25,6 +25,11 @@ The GPU is sampled every second in a background thread while the agent works:
     NVIDIA            one long-running nvidia-smi --query-gpu ... -lms 1000 (Linux and Windows)
     AMD, Windows      the GPU performance counters, one long-running typeperf (no power counter exists)
 
+After the agent stops, the GPU fault events logged while it ran are counted (``faults``: GPU resets, page faults,
+timeouts, other), read once from the kernel log (journalctl -k, else dmesg: amdgpu's reset, page fault and ring
+timeout lines, NVIDIA's NVRM Xid lines with their numbers) or, on Windows, the System event log (Display 4101, a
+display driver timeout, and errors and warnings from amdkmdag, amdwddmg and nvlddmkm).
+
 The result is a ``telemetry`` block in the task's result.json and one printed line. Anything that can't be
 measured is null, with the reason in ``reason``; never 0. Telemetry reads the model server and the GPU only, never
 the agent's process, and never changes a score.
@@ -39,6 +44,7 @@ apps; or the server's GPU engine counters), else every GPU; ``gpu_scope`` says w
 
 from __future__ import annotations
 
+import base64
 import csv
 import glob
 import json
@@ -49,6 +55,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -612,6 +619,162 @@ def gpu_block(sampler: Optional[Sampler], reason: Optional[str]) -> Dict[str, An
     return out
 
 
+# ---------------------------------------------------------------- GPU faults in the kernel or system log
+
+FAULT_KINDS = ("resets", "page_faults", "timeouts", "other")
+FAULT_LINES = 5  # sample lines kept per task
+FAULT_LINE_CHARS = 200
+FAULT_TIMEOUT_S = 60
+#: amdgpu's headline line for each kind of event. A page fault's follow-up lines (the faulting process, address,
+#: *_L2_PROTECTION_FAULT_STATUS, the UTCL2 client) are not counted: PROTECTION_FAULT lines count as page faults only
+#: when no headline line is there. A reset counts its "GPU reset begin" line; other reset lines count only without one.
+AMD_FAULT = (("resets", re.compile(r"GPU reset begin", re.I)),
+             ("page_faults", re.compile(r"page fault|GPU fault detected", re.I)),
+             ("timeouts", re.compile(r"ring \S+ timeout|MES failed to respond", re.I)),
+             ("other", re.compile(r"device lost|HW exception|\bGPU hang\b|uncorrectable", re.I)))
+AMD_RESET_OTHER = re.compile(r"\b(?:GPU|ASIC|BACO|mode ?[12]) reset\b(?!.*\b(?:succeeded|failed|end)\b)", re.I)
+AMD_PROTECTION = re.compile(r"L2_PROTECTION_FAULT", re.I)
+#: NVIDIA's driver reports each GPU error as an Xid; the number says what happened.
+NV_XID = re.compile(r"NVRM: Xid \(([^)]*)\):\s*(\d+)")
+NV_OTHER = re.compile(r"NVRM: .*(RmInitAdapter failed|GPU lost)", re.I)
+XID_KIND = {8: "timeouts", 109: "timeouts", 119: "timeouts", 120: "timeouts",  # stopped processing, GSP timeouts
+            31: "page_faults",  # MMU fault
+            79: "resets", 154: "resets"}  # fallen off the bus, recovery action (reset) required
+#: Windows: display-driver timeouts (Display 4101, a TDR) and errors and warnings from the GPU drivers.
+WIN_FAULT_PS = r"""
+$s = [DateTimeOffset]::FromUnixTimeMilliseconds(%d).LocalDateTime
+$e = [DateTimeOffset]::FromUnixTimeMilliseconds(%d).LocalDateTime
+try {
+  Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=$s; EndTime=$e} -ErrorAction Stop |
+    Where-Object { ($_.Id -eq 4101 -and $_.ProviderName -eq 'Display') -or
+                   ($_.ProviderName -match '^(amdkmdag|amdkmdap|amdwddmg|nvlddmkm)$' -and $_.Level -in 1,2,3) } |
+    ForEach-Object { 'EVENT|{0:s}|{1}|{2}|{3}' -f $_.TimeCreated, $_.Id, $_.ProviderName,
+                     ((($_.Message + '') -replace '\s+', ' ').Trim()) }
+  'FAULTLOG_OK'
+} catch {
+  if ($_.FullyQualifiedErrorId -match 'NoMatchingEventsFound') { 'FAULTLOG_OK' } else { 'FAULTLOG_ERROR ' + $_ }
+}
+"""
+
+
+def _run_rc(cmd: Sequence[str], timeout: float = FAULT_TIMEOUT_S) -> Tuple[Optional[int], str, str]:
+    """(exit code, stdout, stderr); the exit code is None when the command can't run."""
+    try:
+        p = subprocess.run(list(cmd), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout, stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return p.returncode, p.stdout, p.stderr
+    except FileNotFoundError:
+        return None, "", "not installed"
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, "", f"{type(e).__name__}: {e}"
+
+
+Hit = Tuple[str, Optional[int], str]  # (kind, Xid, the line)
+
+
+def kernel_hits(lines: Sequence[str]) -> List[Hit]:
+    """The fault lines among kernel-log lines. Kind "reset?" and "protection" are counted only as a fallback."""
+    hits = []
+    for text in lines:
+        xid = NV_XID.search(text)
+        if xid:
+            hits.append((XID_KIND.get(int(xid.group(2)), "other"), int(xid.group(2)), text))
+        elif NV_OTHER.search(text):
+            hits.append(("other", None, text))
+        elif "amdgpu" in text.lower():
+            kind = next((k for k, rx in AMD_FAULT if rx.search(text)), None) or \
+                ("reset?" if AMD_RESET_OTHER.search(text) else "protection" if AMD_PROTECTION.search(text) else None)
+            if kind:
+                hits.append((kind, None, text))
+    return hits
+
+
+def windows_hits(text: str) -> List[Hit]:
+    """WIN_FAULT_PS's events: a TDR is a timeout, an nvlddmkm event is read by its Xid, an AMD driver event by its
+    message."""
+    hits: List[Hit] = []
+    for row in text.splitlines():
+        if not row.startswith("EVENT|"):
+            continue
+        _, when, eid, provider, message = (row.split("|", 4) + [""] * 4)[:5]
+        line, low = f"{when} {provider} {eid}: {message}", message.lower()
+        if provider == "Display":
+            hits.append(("timeouts", None, line))
+        elif provider == "nvlddmkm":
+            xid = re.search(r"\bXid\b\D{0,20}?(\d+)", message)
+            hits.append((XID_KIND.get(int(xid.group(1)), "other"), int(xid.group(1)), line) if xid
+                        else ("other", None, line))
+        else:
+            hits.append(("resets" if "reset" in low or "recover" in low else
+                         "page_faults" if "page fault" in low or "pagefault" in low else
+                         "timeouts" if "timeout" in low or "not responding" in low else "other", None, line))
+    return hits
+
+
+def fault_block(hits: Sequence[Hit], source: Optional[str], reason: Optional[str] = None) -> Dict[str, Any]:
+    """Each kind of GPU fault event counted, from the task window's fault lines. With a ``reason`` the log couldn't
+    be read: the counts are None, never 0."""
+    out: Dict[str, Any] = {k: None for k in FAULT_KINDS}
+    out.update(xids=None, lines=[], source=source, reason=reason)
+    if reason:
+        return out
+    n = {k: sum(1 for h in hits if h[0] == k) for k in FAULT_KINDS + ("reset?", "protection")}
+    counts = {k: n[k] for k in FAULT_KINDS}
+    counts["resets"] = n["resets"] or n["reset?"]
+    counts["page_faults"] = n["page_faults"] or n["protection"]
+    out.update(counts, xids=[h[1] for h in hits if h[1] is not None],
+               lines=[h[2].strip()[:FAULT_LINE_CHARS] for h in hits[:FAULT_LINES]])
+    return out
+
+
+def read_faults(start: float, end: float) -> Dict[str, Any]:
+    """GPU fault events logged between two time.time() readings: the kernel log on Linux (journalctl -k, else
+    dmesg), the System event log on Windows. Read once, after the task; it reads logs only."""
+    if sys.platform == "win32":
+        script = WIN_FAULT_PS % (int(start * 1000), int(end * 1000) + 1000)
+        rc, out, err = _run_rc(["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                                base64.b64encode(script.encode("utf-16-le")).decode()])
+        if "FAULTLOG_OK" not in out.splitlines():
+            detail = next((x[15:] for x in out.splitlines() if x.startswith("FAULTLOG_ERROR ")), "") or \
+                _last(err, rc)
+            return fault_block([], None, f"not measured: the System event log could not be read: {detail[:200]}")
+        return fault_block(windows_hits(out), "windows-system-log")
+    if not sys.platform.startswith("linux"):
+        return fault_block([], None, f"not measured: no GPU fault log reader for {sys.platform}")
+    rc, out, err = _run_rc(["journalctl", "-k", "--no-pager", "-o", "short-iso",
+                            "--since", f"@{int(start)}", "--until", f"@{int(end) + 1}"])
+    denied = re.search(r"not seeing messages from other users|insufficient permissions|No journal files", err, re.I)
+    if rc == 0 and not denied:
+        return fault_block(kernel_hits([x for x in out.splitlines() if not x.startswith("-- ")]), "journalctl -k")
+    why = ["journalctl -k: " + ("no access to the system journal (needs the adm or systemd-journal group)"
+                                if denied else _last(err, rc))]
+    rc, out, err = _run_rc(["dmesg", "--time-format", "iso"])
+    if rc != 0:
+        return fault_block([], None, f"not measured: {why[0]}; dmesg: {_last(err, rc)}")
+    lines, dated = [], 0
+    for x in out.splitlines():
+        stamp = DMESG_ISO.match(x)
+        if stamp:
+            dated += 1
+            when = datetime.fromisoformat(f"{stamp.group(1)}.{(stamp.group(2) or '0').ljust(6, '0')[:6]}"
+                                          f"{stamp.group(3)}:{stamp.group(4)}").timestamp()
+            if start - 1 <= when <= end + 1:
+                lines.append(x)
+    if out.strip() and not dated:
+        return fault_block([], None, f"not measured: {why[0]}; dmesg printed no ISO timestamps")
+    return fault_block(kernel_hits(lines), "dmesg")
+
+
+#: dmesg --time-format iso: 2026-11-10T14:03:21,123456+00:00
+DMESG_ISO = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:[,.](\d+))?([+-]\d\d):?(\d\d)\s")
+
+
+def _last(err: str, rc: Optional[int]) -> str:
+    """The last line of a command's stderr (without the "dmesg: " it starts with), or its exit code."""
+    lines = err.strip().splitlines()
+    return re.sub(r"^(?:dmesg|journalctl): ", "", lines[-1])[:160] if lines else f"exit code {rc}"
+
+
 # ---------------------------------------------------------------- one task
 
 class Telemetry:
@@ -625,10 +788,11 @@ class Telemetry:
         self.sampler: Optional[Sampler] = None
         self.gpu_reason: Optional[str] = None
         self.started = 0.0
+        self.wall_start = 0.0
         self.block: Optional[Dict[str, Any]] = None
 
     def start(self) -> "Telemetry":
-        self.started = time.monotonic()
+        self.started, self.wall_start = time.monotonic(), time.time()
         try:
             self.server, self.before, self.server_reason = find_server()
         except Exception as e:  # noqa: BLE001
@@ -660,8 +824,13 @@ class Telemetry:
             gpu = gpu_block(self.sampler, self.gpu_reason)
         except Exception as e:  # noqa: BLE001
             gpu = gpu_block(None, f"GPU samples could not be summarized: {type(e).__name__}: {e}")
-        self.block = {"interval_s": self.interval_s, "seconds": round(time.monotonic() - self.started, 1),
-                      "server": server, "gpu": gpu}
+        seconds = round(time.monotonic() - self.started, 1)
+        try:
+            faults = read_faults(self.wall_start, time.time())
+        except Exception as e:  # noqa: BLE001
+            faults = fault_block([], None, f"not measured: the log could not be read: {type(e).__name__}: {e}")
+        self.block = {"interval_s": self.interval_s, "seconds": seconds, "server": server, "gpu": gpu,
+                      "faults": faults}
         return self.block
 
 
@@ -676,7 +845,14 @@ def line(block: Dict[str, Any]) -> str:
             f"peak VRAM {val(g.get('vram_peak_gb'), '{:.1f}')} GB", f"util {val(g.get('util_mean_pct'), '{:.0f}')}%"]
     if g.get("power_mean_w") is not None:
         bits.append(f"{g['power_mean_w']:.0f} W")
-    notes = [r for r in (s.get("reason"), g.get("reason")) if r]
+    f = block.get("faults") or {}
+    if f.get("reason"):
+        bits.append("GPU faults n/a")
+    elif any(f.get(k) for k in FAULT_KINDS):
+        names = {k: k.replace("_", " ") for k in FAULT_KINDS}
+        bits.append("GPU faults: " + ", ".join(f"{f[k]} {names[k].rstrip('s') if f[k] == 1 else names[k]}"
+                                               for k in FAULT_KINDS if f.get(k)))
+    notes = [r for r in (s.get("reason"), g.get("reason"), f.get("reason")) if r]
     return "telemetry: " + ", ".join(bits) + (f" ({'; '.join(notes)})" if notes else "")
 
 
