@@ -2,7 +2,7 @@
 
 Every change goes through a pull request against `main`; nobody pushes to `main` directly and nobody force-pushes. CI runs two workflows, and a PR merges once both are green and a maintainer has reviewed it:
 
-- **tests**: `pytest` on Ubuntu and Windows with Python 3.13, including `tests/test_task_data.py`, which checks every task file against `knowledgework/SCHEMA.md` and the fixture builder.
+- **tests**: `pytest` on Ubuntu and Windows with Python 3.13, including `tests/test_task_data.py`, which checks every task file against `knowledgework/SCHEMA.md` and the fixture builder; and a smoke test, also on Ubuntu and Windows (`tools/smoke.py`), that builds the release zip, installs it in a clean folder and runs `kw-00-smoke` end to end with a stub agent and `--no-grade`.
 - **lint**, also on Ubuntu and Windows: `ruff` (undefined names, unused code), `shellcheck`, valid JSON, PowerShell parsing, and line endings in each checkout.
 
 Before opening one:
@@ -12,6 +12,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 python -m ruff check .
 shellcheck -S warning $(git ls-files "*.sh")
+python tools/smoke.py      # packages the last commit: commit first (a few minutes; no key, no model)
 ```
 
 `requirements-dev.txt` includes `ruff` and `shellcheck`, so the same checks run locally.
