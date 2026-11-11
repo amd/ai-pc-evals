@@ -21,6 +21,7 @@ that log around their reply), or a file it wrote ("file:<path>"). Terminal colou
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import time
