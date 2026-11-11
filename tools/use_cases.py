@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Write USE_CASES.md: one table of every eval use case, generated from the task definitions.
 
 usage: python tools/use_cases.py [--check]

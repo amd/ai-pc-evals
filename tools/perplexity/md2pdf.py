@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Markdown -> styled HTML (marked + mermaid in the browser) -> PDF via headless Chrome.
 
 usage: python md2pdf.py <in.md> <out.pdf>

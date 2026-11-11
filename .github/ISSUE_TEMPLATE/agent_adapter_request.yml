@@ -1,0 +1,43 @@
+name: Agent adapter request
+description: Ask for (or offer) support for running another agent.
+labels: ["agent adapter"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most command-line agents need only a few lines in `tools/agents/agents.json`; see docs/ADDING_AN_AGENT.md.
+        If you plan to add it yourself, say so below.
+  - type: input
+    id: agent
+    attributes:
+      label: Agent
+      description: Name, version, and a link to its documentation.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: How it runs
+      options:
+        - Command line (can run one prompt non-interactively)
+        - Desktop app driven by a person
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: |
+        For a command-line agent: the command that runs one prompt in a folder and exits, how to choose the model, and where its final answer ends up (printed, or a file).
+        What it can do: web access, connectors (e.g. Google Drive), reading images. Can it log its tool calls?
+    validations:
+      required: true
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Will you open a pull request?
+      options:
+        - "Yes"
+        - "No"
+        - Maybe, with some help
