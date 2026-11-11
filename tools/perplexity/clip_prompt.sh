@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 # usage: clip_prompt.sh <leg> <batch> <task> — put the exact prepared prompt on the clipboard, verified
 set -euo pipefail
 . "$(dirname "$0")/_env.sh"

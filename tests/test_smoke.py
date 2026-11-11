@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """tools/smoke.py's own logic. The smoke test itself (build, install, run) is the CI job "smoke", not a unit test."""
 import json
 import subprocess
