@@ -126,10 +126,10 @@ def test_recording_another_run_keeps_the_files_other_arms(tmp_path, capsys):
 def test_perplexity_tables_wrapper_renders_its_legs():
     import tables
 
-    row = {"passed": True, "deliverable": 50.0, "total": 55, "usd": 0.33, "quality": 5.0}
+    row = {"passed": True, "deliverable": 50.0, "total": 42, "usd": 1.23, "quality": 4.0}  # made-up numbers
     md = tables.render({"kw-01-multihop-research": {"perplexity-cloud": row, "perplexity-local": dict(row, usd=0.0)}})
     assert md.index("Table 1") < md.index("Table 2")
-    assert "| kw-01-multihop-research | medium | ✅ 5.0 · 55s · $0.33 | ✅ 5.0 · 55s | ⏳ | ⏳ |" in md
+    assert "| kw-01-multihop-research | medium | ✅ 4.0 · 42s · $1.23 | ✅ 4.0 · 42s | ⏳ | ⏳ |" in md
 
 
 # --- review fixes -------------------------------------------------------------------------------------
