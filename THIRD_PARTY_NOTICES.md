@@ -15,7 +15,8 @@ share modified copies of files whose licence forbids changes.
 
 | Source | Used by | Terms |
 |---|---|---|
-| US federal agencies: BTS, BEA, BLS, Census, EIA, FDIC, FHFA, Federal Reserve (FOMC, FRASER), GSA, IRS, NASA, NIST, NOAA, OPM, USCIS, USGS, eCFR and GovInfo | many tasks | Works of the US government: public domain in the United States |
+| US federal agencies: BTS, BEA, BLS, Census, EIA, FDIC, FHFA, Federal Reserve (FOMC), GSA, IRS, NASA, NIST, NOAA, OPM, USCIS, USGS, eCFR and GovInfo | many tasks | Works of the US government: public domain in the United States |
+| BLS bulletins served by FRASER, the Federal Reserve Bank of St. Louis's archive | knowledge-work tasks | The bulletins are works of the US government (public domain); FRASER only hosts them |
 | Federal Reserve Bank of St. Louis (FRED) | knowledge-work tasks | [FRED terms of use](https://fred.stlouisfed.org/legal/). The series used are public-domain government data |
 | GSA CALC+ labour rates (an extract is embedded in `build_fixtures.py`) | kw-08 | CC0 1.0, via data.gov |
 | HM Revenue & Customs spending files (assets.publishing.service.gov.uk) | kw-05 | Contains public sector information licensed under the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/) |
@@ -27,10 +28,13 @@ share modified copies of files whose licence forbids changes.
 | Y Combinator post-money SAFE | kw-03 | © Y Combinator. Downloaded for local use only, never redistributed |
 | Walmart earnings releases | kw-12 | © Walmart Inc. Downloaded for local use only, never redistributed |
 | Raspberry Pi datasheets and product briefs | kw-02 | [CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/), © Raspberry Pi Ltd. Never redistribute modified copies |
-| Loghub system logs, via Zenodo record 8196385 | kw-09 | As published by the Loghub project (LogPAI). Read [its terms](https://github.com/logpai/loghub) before you use or share them |
+| Loghub system logs, via Zenodo record 8196385 | kw-09 | The two published terms disagree: the [Zenodo record](https://zenodo.org/records/8196385) says CC BY 4.0, while the [Loghub repository](https://github.com/logpai/loghub) says the logs are for research or academic work only. Downloaded for local use only, never redistributed. Check both before you use or share them |
 | NASA images, and Wikimedia Commons files marked public domain or CC0 | kw-14 | As marked on each file's page |
 | Open-source project files: express, react, kubernetes, vscode, requests, python-pptx, bootstrap, vue, the Apache License text | kw-14, everyday tasks | Each file's own open-source licence (MIT, BSD or Apache-2.0) |
 | ROCm TheRock, checked out at a pinned commit | dev-tr-* | MIT, © Advanced Micro Devices, Inc. |
+| AMD web pages (amd.com, developer.amd.com), saved by `tools/snapshot_sources.py` | pc-01 | © Advanced Micro Devices, Inc. Saved for local use only, never redistributed |
+| A Perplexity blog post (perplexity.ai), saved by hand | pc-01 | © Perplexity AI, Inc. Saved for local use only, never redistributed |
+| Public Reddit threads, which pc-07's request points the agent to | pc-07 | Nothing is downloaded or stored by this repository; the agent reads them itself, under [Reddit's terms](https://redditinc.com/policies/user-agreement) |
 
 The source note for each task (`knowledgework/sources/<task>.md`) lists every URL it uses and the terms
 that apply.
@@ -64,12 +68,24 @@ tests whether an agent runs a downloaded installer. There are no other executabl
 ## Python packages
 
 `requirements.txt` lists the packages the evals install. None of them is copied into this
-repository. Each is installed from PyPI under its own licence, including MIT, BSD, Apache-2.0 and the
-HPND licence (Pillow). `shellcheck-py` in `requirements-dev.txt` installs the ShellCheck binary, which is
+repository. Each is installed from PyPI under its own licence, including MIT, BSD, Apache-2.0, PSF-2.0
+(`typing_extensions`) and MIT-CMU (Pillow). One dependency of a dependency is weak copyleft: `certifi`
+(installed by `requests` and `httpx`) is MPL-2.0; it is used unmodified. Some wheels bundle native
+libraries under their own licences, listed in each wheel: `pypdfium2` ships the PDFium binary (BSD-3-Clause
+and Apache-2.0, with FreeType, libjpeg-turbo, OpenJPEG, lcms2 and others), and `numpy`, `lxml` and Pillow
+bundle libraries too. To see every installed package's licence, run
+`python -m pip install pip-licenses && pip-licenses --with-urls` in a venv made with
+`-r requirements.txt -c constraints.txt`. `shellcheck-py` in `requirements-dev.txt` installs the ShellCheck binary, which is
 GPL-3.0. It is a development tool only, used by the lint workflow: it is not in `requirements.txt`, nothing in the evals links to it, and the release zip leaves out `requirements-dev.txt`.
 
 ## Trademarks
 
-Product and company names in this repository, such as Claude, Perplexity, Walmart, Raspberry Pi, Y
-Combinator and curl, are trademarks of their owners. They are used only to name the products, data or
-documents involved. This project is not affiliated with or endorsed by those owners.
+AMD, the AMD Arrow logo, Ryzen, Radeon, ROCm and combinations thereof are trademarks of Advanced Micro
+Devices, Inc.
+
+Other product and company names in this repository are trademarks of their owners, among them:
+Anthropic and Claude; Microsoft, Windows, Office and OneDrive; Google, Google Drive and NotebookLM;
+NVIDIA; Perplexity; OpenAI; Reddit; GitHub; Slack; Ollama; LM Studio; OpenCode; OpenClaw; Hermes (Nous
+Research); Pi; Ubuntu (Canonical); Linux (Linus Torvalds); Walmart; Raspberry Pi; Y Combinator; and curl.
+They are used only to name the products, data or documents involved. This project is not affiliated with
+or endorsed by those owners.

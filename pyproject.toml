@@ -14,8 +14,22 @@ description = "Evaluations of AI agents doing knowledge work and development on 
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Advanced Micro Devices, Inc." }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/amd/ai-pc-evals"
+Repository = "https://github.com/amd/ai-pc-evals"
+Issues = "https://github.com/amd/ai-pc-evals/issues"
+Changelog = "https://github.com/amd/ai-pc-evals/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff==0.17.1", "shellcheck-py==0.11.0.1"]  # as requirements-dev.txt
