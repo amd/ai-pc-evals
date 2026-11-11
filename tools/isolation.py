@@ -306,7 +306,7 @@ def stop_user_processes(user: str) -> Tuple[bool, str]:
 #: kwengine.grade's probe hook (kwengine never imports tools/: the runner names this file's launcher instead).
 PROBE_LAUNCHER_ENV, PROBE_ROOT_ENV = "KW_PROBE_LAUNCHER", "KW_PROBE_ROOT"
 #: The agent user's Python for probes, by default the one on its PATH: "python" on Windows (installed for all
-#: users, Layer 4 step 2), "python3" on Linux (Ubuntu has no "python"; SECURITY.md puts kwagent's venv first).
+#: users, Layer 4 step 2), "python3" on Linux (Ubuntu has no "python"; ISOLATION.md puts kwagent's venv first).
 AGENT_PYTHON_ENV = "KW_AGENT_PYTHON"
 
 
