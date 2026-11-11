@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 # usage: resume.sh <leg> <batch> <task> — like go.sh but keeps the existing .start mark
 # (records to new .resume-<time> files so the first recording and resource log are kept)
 set -uo pipefail

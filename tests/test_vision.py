@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """render.py, vision_judge.py and blind_review.py, offline: the API is a fake client."""
 import base64
 import io
@@ -33,12 +35,13 @@ def test_images_pass_through_unchanged(tmp_path):
 
 
 def test_pdf_pages_become_one_png_each(tmp_path):
-    import fitz
+    from reportlab.pdfgen import canvas
 
-    doc = fitz.open()
+    c = canvas.Canvas(str(tmp_path / "brief.pdf"), invariant=1)
     for i in range(3):
-        doc.new_page().insert_text((72, 72), f"page {i + 1}")
-    doc.save(tmp_path / "brief.pdf")
+        c.drawString(72, 720, f"page {i + 1}")
+        c.showPage()
+    c.save()
     out = render.render(tmp_path / "brief.pdf", tmp_path / "out")
     assert [p.name for p in out] == ["brief-p01.png", "brief-p02.png", "brief-p03.png"]
 
@@ -223,6 +226,17 @@ def test_every_call_uses_the_current_model_with_structured_output_and_fallbacks(
         assert kw["thinking"] == {"type": "adaptive"}
         assert kw["fallbacks"] == "default" and kw["betas"] == ["server-side-fallback-2026-07-01"]
         assert "temperature" not in kw  # this model rejects sampling parameters
+
+
+def test_chrome_is_found_on_path_when_chrome_path_is_unset(monkeypatch):
+    monkeypatch.delenv("CHROME_PATH", raising=False)
+    monkeypatch.setattr(render.shutil, "which", lambda name: "/usr/bin/chromium" if name == "chromium" else None)
+    assert render.find_chrome() == "/usr/bin/chromium"
+    monkeypatch.setenv("CHROME_PATH", "/opt/chrome")
+    assert render.find_chrome() == "/opt/chrome"  # an explicit path always wins
+    monkeypatch.delenv("CHROME_PATH")
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    assert render.find_chrome().endswith("chrome.exe")  # Windows' default install, as before
 
 
 def test_office_lock_files_are_not_rendered(tmp_path):

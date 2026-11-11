@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Other model servers on the PC, the running engine's build, and the waiter's stall hint: no real processes or HTTP."""
 
 import io

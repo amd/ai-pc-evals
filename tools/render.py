@@ -1,9 +1,11 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Render a deliverable to one PNG per slide or page, as a person would see it.
 
 usage: python tools/render.py <file> <out-dir> [--backend auto|office|libreoffice] [--dpi 110]
 
 Everything goes through PDF: Office (PowerShell COM, Windows) or LibreOffice converts
-pptx/docx/xlsx, Chrome prints html, and PyMuPDF rasterises the pages. Images pass through.
+pptx/docx/xlsx, Chrome prints html, and pypdfium2 (PDFium) rasterises the pages. Images pass through.
 With --backend auto, a Windows PC without Office (its COM classes not registered) falls back to
 LibreOffice when soffice is found.
 The source is copied first, so a deliverable is never opened in place.
@@ -24,8 +26,20 @@ OFFICE = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xlsm", ".xls"}
 HTML = {".html", ".htm"}
 IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 CONVERT_TIMEOUT_S = 180
-CHROME = os.environ.get("CHROME_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 MAX_PAGES = 40
+
+
+def find_chrome() -> str:
+    """CHROME_PATH, else Chrome or Chromium on PATH (Linux, macOS), else Chrome's default Windows install."""
+    if os.environ.get("CHROME_PATH"):
+        return os.environ["CHROME_PATH"]
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"):
+        if shutil.which(name):
+            return shutil.which(name)
+    return r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+
+CHROME = find_chrome()
 
 # Opens a copy read-only and invisible, exports PDF, closes it. PowerPoint and Word are
 # single-instance, so the app may be the user's own: quit it only if nothing else is open.
@@ -158,18 +172,19 @@ def to_pdf(src: Path, work: Path, backend: str) -> Path:
 
 
 def pdf_to_pngs(pdf: Path, out_dir: Path, stem: str, dpi: int) -> list[Path]:
-    import fitz  # PyMuPDF
+    import pypdfium2 as pdfium
 
     out = []
-    with fitz.open(pdf) as doc:
-        if doc.page_count > MAX_PAGES:
-            print(f"warning: {pdf.name} has {doc.page_count} pages; rendering the first {MAX_PAGES}", file=sys.stderr)
-        for i, page in enumerate(doc):
-            if i >= MAX_PAGES:
-                break
+    doc = pdfium.PdfDocument(pdf)
+    try:
+        if len(doc) > MAX_PAGES:
+            print(f"warning: {pdf.name} has {len(doc)} pages; rendering the first {MAX_PAGES}", file=sys.stderr)
+        for i in range(min(len(doc), MAX_PAGES)):
             png = out_dir / f"{stem}-p{i + 1:02d}.png"
-            page.get_pixmap(dpi=dpi).save(png)
+            doc[i].render(scale=dpi / 72).to_pil().convert("RGB").save(png)
             out.append(png)
+    finally:
+        doc.close()
     return out
 
 
