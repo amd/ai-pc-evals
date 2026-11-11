@@ -32,7 +32,7 @@ Issues = "https://github.com/amd/ai-pc-evals/issues"
 Changelog = "https://github.com/amd/ai-pc-evals/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff==0.17.1", "shellcheck-py==0.11.0.1"]  # as requirements-dev.txt
+dev = ["pytest>=8", "ruff==0.17.4", "shellcheck-py==0.11.0.1"]  # as requirements-dev.txt
 
 [project.scripts]
 kwengine = "kwengine.cli:main"
