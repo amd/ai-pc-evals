@@ -1,5 +1,5 @@
 # Errors only: undefined names, unused imports/locals and syntax errors. Style is left alone.
-target-version = "py313"
+target-version = "py312"  # the oldest Python supported (pyproject.toml requires-python)
 extend-exclude = ["**/__pycache__"]
 
 [lint]

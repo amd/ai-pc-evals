@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Record the primary display with ffmpeg until a stop file appears.
 
 usage: python rec.py <out.mp4>

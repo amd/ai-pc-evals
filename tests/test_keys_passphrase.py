@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Rotating the answers passphrase and copying it to the clipboard, on temp bundles with a fake keyring."""
 
 import json

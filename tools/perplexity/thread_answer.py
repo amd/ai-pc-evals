@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Extract the agent's final answer from a copied Perplexity thread (stdin) to stdout.
 
 usage: python thread_answer.py [--prompt-file FILE] < thread.txt
@@ -6,7 +8,7 @@ A copied thread is the prompt, then the agent's turn, then the app's chrome:
 
     <prompt>
     Local agent: <model>        (local mode only)
-    2m 51s                      (the agent's time; local mode only)
+    3m 00s                      (the agent's time; local mode only)
     <answer>
     Sources / Usage             (only when the agent cited or the app reports usage)
 
@@ -17,7 +19,7 @@ The rule, applied to the last turn in the thread:
    time or step count; an answer line that merely starts with those words is not one);
    with none, at the end of the last place the whole prompt appears, every non-blank line in
    order (when --prompt-file gives it; cloud copies need it); with neither, at the first
-   agent time ('45s', '2m 51s', '1h 2m 3s', optionally after 'Finished'/'Completed'/'Worked
+   agent time ('45s', '3m 00s', '1h 2m 3s', optionally after 'Finished'/'Completed'/'Worked
    for') outside a Sources/Usage section. Agent headers, time lines and step counts ('12
    steps', 'Completed 12 steps') right after it are skipped, and the answer begins there. A
    line inside the answer (the prompt's last line repeated, a bare '45s') never moves the

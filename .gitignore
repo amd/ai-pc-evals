@@ -38,6 +38,7 @@ build/
 *.AppImage
 *.dll
 *.whl
+*.egg-info/
 
 # Downloaded or generated documents
 *.pdf

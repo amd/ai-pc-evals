@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """What the running local engine is: build, context size and model, read from the server itself.
 
 usage: python engine_info.py [--port N] [--build]
