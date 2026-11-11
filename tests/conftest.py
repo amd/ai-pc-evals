@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Put the repo's script folders on sys.path; every test here is offline and fast."""
 import sys
 from pathlib import Path
