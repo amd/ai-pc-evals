@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import ntpath
 import os
 import re
@@ -189,18 +190,66 @@ def _program(action: str) -> str:
     return found.group(1) if found else ""
 
 
+def _runs_as_runner_or_system(run_as: str) -> bool:
+    """A task's "Run As User" is the user running the evals (OneDrive's per-user tasks) or SYSTEM (its per-machine
+    updater). A task of the separate agent user is never OneDrive's own here: the agent user writes its own
+    %LOCALAPPDATA% freely."""
+    who = run_as.strip().lower()
+    domain, _, user = who.rpartition("\\")
+    if who in ("system", "nt authority\\system"):
+        return True
+    me = os.environ.get("USERNAME", "").lower()
+    here = {"", os.environ.get("USERDOMAIN", "").lower(), os.environ.get("COMPUTERNAME", "").lower()}
+    return bool(me) and user == me and domain in here
+
+
+#: What a OneDrive exe says about itself, read from the file a task would run. A valid Microsoft signature alone
+#: isn't enough: Windows' own exes (cmd.exe, powershell.exe) are signed "O=Microsoft Corporation" too, and a copy
+#: keeps its signature under any name. The product and original file name are inside the signed file.
+_EXE_FACTS = ("$p = [Console]::In.ReadLine(); $s = Get-AuthenticodeSignature -LiteralPath $p; "
+              "$v = (Get-Item -LiteralPath $p).VersionInfo; "
+              "@{status = [string]$s.Status; signer = [string]$s.SignerCertificate.Subject; "
+              "product = [string]$v.ProductName; original = [string]$v.OriginalFilename} | ConvertTo-Json -Compress")
+
+
+def _is_microsofts_onedrive_exe(path: str) -> bool:
+    """*path* is OneDrive's own exe as Microsoft signed it; False when that can't be read."""
+    out = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _EXE_FACTS], stdin=path + "\n")
+    try:
+        facts = json.loads(out or "")
+    except ValueError:
+        return False
+    return (isinstance(facts, dict) and facts.get("status") == "Valid"
+            and "O=Microsoft Corporation" in str(facts.get("signer"))
+            and facts.get("product") == "Microsoft OneDrive"
+            and str(facts.get("original")).lower() == ntpath.basename(path).lower())
+
+
 def _onedrive_program(name: str) -> str:
     """The OneDrive program a new root "\\OneDrive ..." task runs when it is OneDrive's own, else "". It is
-    OneDrive's own only if the program the action starts is a OneDrive exe inside OneDrive's install folders:
-    a task named like OneDrive, or one running an exe from anywhere else, is still disabled."""
+    OneDrive's own only if it runs as the runner's user or SYSTEM, and the program the action starts is a OneDrive
+    exe inside OneDrive's install folders that Microsoft signed as OneDrive. A task named like OneDrive, one running
+    an exe from anywhere else, or one running a payload copied into the per-user install folder (which the user,
+    and so a same-user agent, can write) is still disabled.
+
+    The column names read here are English. On a non-English Windows they are missing, so OneDrive's own tasks
+    are disabled and reported as before #34: safe, only noisier."""
     if not isolation.WINDOWS or not name.startswith("\\OneDrive "):
         return ""
     rows = list(csv.reader(io.StringIO(_run(["schtasks", "/query", "/tn", name, "/v", "/fo", "CSV"]) or "")))
     if len(rows) < 2:
         return ""
-    program = ntpath.normpath(ntpath.expandvars(_program(dict(zip(rows[0], rows[1])).get("Task To Run", ""))))
+    task = dict(zip(rows[0], rows[1]))
+    run_as = task.get("Run As User", "")
+    if not _runs_as_runner_or_system(run_as):
+        return ""
+    raw = _program(task.get("Task To Run", ""))
+    if "%" in raw and run_as.strip().lower().endswith("system"):
+        return ""  # expanded here with the runner's variables, not SYSTEM's: no telling what it runs
+    program = ntpath.normpath(ntpath.expandvars(raw))
     path = ntpath.normcase(program)
-    if ntpath.basename(path) in _ONEDRIVE_EXES and any(path.startswith(f) for f in _onedrive_folders()):
+    if (ntpath.basename(path) in _ONEDRIVE_EXES and any(path.startswith(f) for f in _onedrive_folders())
+            and _is_microsofts_onedrive_exe(program)):
         return program
     return ""
 
