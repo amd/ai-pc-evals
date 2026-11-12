@@ -134,8 +134,10 @@ def fetch(url: str, sha256: str, name: str, cache_dir: Path) -> Path:
         partial.unlink()
         raise InputIntegrityError(
             f"{url} downloaded with SHA-256 {actual}, but the task pins {sha256}. "
-            "The document changed upstream: re-verify it and update the task's "
-            "sha256 in knowledgework/tasks.json, or pin an archived copy."
+            "Either the document changed upstream (set KW_MIRROR to a mirror of the pinned files and build again "
+            "with knowledgework/build_fixtures.py, see docs/TASKS.md), or the task file's sha256 disagrees with "
+            "PINS in knowledgework/build_fixtures.py (a newer release fixes that; maintainers: python "
+            "knowledgework/sync_input_pins.py --check)."
         )
     partial.replace(cached)
     return cached
