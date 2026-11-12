@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 # Shared setup for the Perplexity helpers. Sourced by each script, never run on its own.
 # shellcheck shell=bash disable=SC2034  # REPO and PY are used by the scripts that source this file
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

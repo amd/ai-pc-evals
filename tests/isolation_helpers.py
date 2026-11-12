@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """A throwaway repo with made-up answers, for the answer-isolation tests."""
 
 import json
