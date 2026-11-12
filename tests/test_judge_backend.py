@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import anthropic
@@ -136,6 +137,17 @@ def test_claude_code_model_names_map_to_api_ids():
     assert (ft.api_model_id("sonnet"), ft.api_model_id("haiku")) == ("claude-sonnet-5-5", "claude-haiku-5-5")
     assert ft.api_model_id("claude-opus-4-8") == "claude-opus-4-8"  # a full id is used as given
     assert ft.judge_model_id("opus", "claude-code") == "opus"  # the CLI gets, and the card records, what was given
+
+
+def test_the_judges_default_model_is_named_in_one_place():
+    """``DEFAULT_CLAUDE_MODEL`` is the judge's default for the engine and every tool: a tool that names a Claude
+    model id itself would keep judging with the old model after the default moves."""
+    repo = Path(__file__).resolve().parents[1]
+    model_id = re.compile(r"""["']claude-(?:opus|sonnet|haiku|fable)-\d""")
+    named = [f"{path.relative_to(repo)}:{n}" for folder in ("kwengine", "tools") for path in (repo / folder).rglob("*.py")
+             if path.name != "_support.py"
+             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if model_id.search(line)]
+    assert not named, f"import kwengine._support.DEFAULT_CLAUDE_MODEL instead: {named}"
 
 
 def test_the_grade_command_takes_a_backend_flag():
