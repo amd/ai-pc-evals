@@ -6,7 +6,8 @@
 
     <run_dir>/
       kw-run.json              suite, revision, and each task's folder and prompt
-      .baseline/<task>.json    path -> SHA-256 of the folder as the agent got it
+      .baseline/<task>.json    path -> SHA-256 of the folder as the agent got it, and of
+                               what is inside each Office file (contents_digest)
       <task>/                  the folder the agent works in
       .records/<task>/         result.json and grading artifacts, never in the folder
 
@@ -25,6 +26,7 @@ import re
 import shutil
 import time
 import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -51,6 +53,9 @@ LEG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 #: Never part of the work: caches, VCS state and the files an OS or Office drops.
 IGNORED_DIRS = frozenset({"__pycache__", ".pytest_cache", ".git"})
 IGNORED_FILES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
+#: Office files are zip archives the fixture build compresses (build_fixtures.normalize_ooxml): their bytes depend
+#: on the zlib build (CPython 3.14 on Windows ships zlib-ng), so the baseline also records what is inside them.
+OFFICE_SUFFIXES = frozenset({".docx", ".xlsx", ".pptx"})
 DOWNLOAD_TIMEOUT_S = 120
 USER_AGENT = "ai-pc-evals/1.0 (+https://github.com/amd/ai-pc-evals)"
 
@@ -129,8 +134,10 @@ def fetch(url: str, sha256: str, name: str, cache_dir: Path) -> Path:
         partial.unlink()
         raise InputIntegrityError(
             f"{url} downloaded with SHA-256 {actual}, but the task pins {sha256}. "
-            "The document changed upstream: re-verify it and update the task's "
-            "sha256 in knowledgework/tasks.json, or pin an archived copy."
+            "Either the document changed upstream (set KW_MIRROR to a mirror of the pinned files and build again "
+            "with knowledgework/build_fixtures.py, see docs/TASKS.md), or the task file's sha256 disagrees with "
+            "PINS in knowledgework/build_fixtures.py (a newer release fixes that; maintainers: python "
+            "knowledgework/sync_input_pins.py --check)."
         )
     partial.replace(cached)
     return cached
@@ -195,6 +202,36 @@ def manifest(root: Path) -> Dict[str, str]:
     return files
 
 
+def contents_digest(path: Path) -> Optional[str]:
+    """SHA-256 of what an Office file holds: each entry's name and the SHA-256 of its decompressed bytes, in name
+    order. Compression and zip header fields (times, OS, flags, order) don't change it; any change to an entry's
+    bytes or name, or an added or removed entry, does. None for any other file, and for an Office file that is not
+    a readable zip or holds two entries with one name (a reader would see only one of them)."""
+    if path.suffix.lower() not in OFFICE_SUFFIXES:
+        return None
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = []
+            for info in archive.infolist():
+                digest = hashlib.sha256()
+                with archive.open(info) as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        digest.update(chunk)
+                entries.append((info.filename, digest.hexdigest()))
+    # Unreadable (corrupt, truncated, encrypted, odd compression): no digest, so only its raw SHA-256 can match.
+    except Exception:  # pylint: disable=broad-exception-caught  # noqa: BLE001
+        return None
+    if len({name for name, _ in entries}) != len(entries):
+        return None
+    return hashlib.sha256(json.dumps(sorted(entries)).encode("ascii")).hexdigest()
+
+
+def contents(root: Path, files: Mapping[str, str]) -> Dict[str, str]:
+    """``contents_digest`` of each Office file among *files* (a ``manifest`` of *root*)."""
+    digests = {rel: contents_digest(root / rel) for rel in files}
+    return {rel: digest for rel, digest in digests.items() if digest}
+
+
 def baseline_path(run_dir: Path, task_id: str) -> Path:
     return run_dir / BASELINE_DIR / f"{task_id}.json"
 
@@ -221,8 +258,9 @@ def prepare(
     materialize(task, workdir, cache_dir, fixtures_root)
     base = baseline_path(root, task.id)
     base.parent.mkdir(parents=True, exist_ok=True)
+    files = manifest(workdir)
     base.write_text(
-        json.dumps({"task": task.id, "files": manifest(workdir)}, indent=2),
+        json.dumps({"task": task.id, "files": files, "contents": contents(workdir, files)}, indent=2),
         encoding="utf-8",
     )
     return workdir
@@ -236,6 +274,13 @@ def read_baseline(run_dir: Path, task_id: str) -> Dict[str, str]:
             "`python -m kwengine prepare`?"
         )
     return json.loads(path.read_text(encoding="utf-8"))["files"]
+
+
+def read_baseline_contents(run_dir: Path, task_id: str) -> Dict[str, str]:
+    """The baseline's ``contents``: empty for a run prepared before it was recorded (its Office inputs must match
+    byte for byte)."""
+    data = json.loads(baseline_path(run_dir, task_id).read_text(encoding="utf-8"))
+    return dict(data.get("contents") or {})
 
 
 def changes(workdir: Path, baseline: Mapping[str, str]) -> Dict[str, List[str]]:

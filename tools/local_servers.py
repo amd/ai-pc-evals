@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Local model servers running on this PC, and its free memory: what shares the GPU with an agent under test.
 
     python tools/local_servers.py        # JSON: every llama-server, Ollama, LM Studio, Lemonade, vLLM and SGLang process

@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 # Sample PC resources every 5 s into a CSV until a stop file appears.
 # usage: powershell -File sysmon.ps1 <out.csv>    stop: create <out.csv>.stop
 param([string]$Out)

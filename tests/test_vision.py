@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """render.py, vision_judge.py and blind_review.py, offline: the API is a fake client."""
 import base64
 import io
@@ -33,12 +35,13 @@ def test_images_pass_through_unchanged(tmp_path):
 
 
 def test_pdf_pages_become_one_png_each(tmp_path):
-    import fitz
+    from reportlab.pdfgen import canvas
 
-    doc = fitz.open()
+    c = canvas.Canvas(str(tmp_path / "brief.pdf"), invariant=1)
     for i in range(3):
-        doc.new_page().insert_text((72, 72), f"page {i + 1}")
-    doc.save(tmp_path / "brief.pdf")
+        c.drawString(72, 720, f"page {i + 1}")
+        c.showPage()
+    c.save()
     out = render.render(tmp_path / "brief.pdf", tmp_path / "out")
     assert [p.name for p in out] == ["brief-p01.png", "brief-p02.png", "brief-p03.png"]
 

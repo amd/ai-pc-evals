@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """tools/perplexity/thread_answer.py: the final answer from a copied Perplexity thread."""
 import io
 import subprocess
@@ -16,7 +18,7 @@ Save it as summary.docx in the task folder.
 
 Local agent: qwen3-32b
 
-2m 51s
+3m 00s
 
 The report finds **three** risks.
 
@@ -28,7 +30,7 @@ Sources
 1 report.pdf
 
 Usage
-104 credits
+100 credits
 """
 
 CLOUD = """Summarise the attached report.
@@ -83,7 +85,7 @@ def test_no_sources_block_runs_to_the_end_minus_buttons():
 
 
 def test_last_turn_wins_and_usage_times_are_ignored():
-    thread = LOCAL.replace("104 credits", "4m 2s\n104 credits") + "\nNow shorten it.\n\nLocal agent: qwen3-32b\n\n9s\n\nShorter.\n"
+    thread = LOCAL.replace("100 credits", "4m 2s\n100 credits") + "\nNow shorten it.\n\nLocal agent: qwen3-32b\n\n9s\n\nShorter.\n"
     assert ta.extract(thread) == "Shorter."
 
 
@@ -122,7 +124,7 @@ def test_an_answer_that_repeats_the_prompt_or_holds_a_time_line_is_kept_whole():
               "That is all.")
     cloud = PROMPT + "\n\n" + answer + "\n\nSources\n\n1 report.pdf\n"
     assert ta.extract(cloud, PROMPT) == answer
-    local = PROMPT + "\n\nLocal agent: qwen3-32b\n\n2m 51s\n\n" + answer + "\n"
+    local = PROMPT + "\n\nLocal agent: qwen3-32b\n\n3m 00s\n\n" + answer + "\n"
     assert ta.extract(local) == answer
     assert ta.extract(local, PROMPT) == answer
 
@@ -134,7 +136,7 @@ def test_an_answer_that_repeats_the_prompt_or_holds_a_time_line_is_kept_whole():
 ])
 def test_an_answer_line_starting_like_an_agent_header_does_not_cut_the_answer(line):
     answer = f"The report finds three risks.\n\n{line}\n\n- Cost overrun\n- Delay"
-    local = PROMPT + "\n\nLocal agent: qwen3-32b\n\n2m 51s\n\n" + answer + "\n\nSources\n\n1 report.pdf\n"
+    local = PROMPT + "\n\nLocal agent: qwen3-32b\n\n3m 00s\n\n" + answer + "\n\nSources\n\n1 report.pdf\n"
     assert ta.extract(local) == answer
     assert ta.extract(local, PROMPT) == answer
     cloud = PROMPT + "\n\n" + answer + "\n\nSources\n\n1 report.pdf\n"
