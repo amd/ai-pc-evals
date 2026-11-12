@@ -10,8 +10,11 @@ updates:
 
   # requirements.txt and requirements-dev.txt. Bumps to the libraries that build inputs or
   # extract what the judge reads change grades: re-grade before merging (see CONTRIBUTING.md).
+  # requirements.txt keeps minimum versions; constraints.txt holds the exact pins. Only raise a minimum
+  # when a pin no longer satisfies it, so existing installs aren't forced into major upgrades.
   - package-ecosystem: pip
     directory: /
+    versioning-strategy: increase-if-necessary
     schedule:
       interval: weekly
     groups:
