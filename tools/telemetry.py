@@ -1,3 +1,5 @@
+# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: MIT
 """What one agent task cost the local model server and the GPU: run_eval.py --telemetry.
 
 For each task, run_eval.py reads the model server's Prometheus /metrics before and after the agent runs and turns
@@ -62,6 +64,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "perplexity"))
 import engine_info  # noqa: E402
+import isolation  # noqa: E402
 import local_servers  # noqa: E402
 
 INTERVAL_S = 1.0
@@ -167,11 +170,31 @@ def probe() -> List[Tuple[Dict[str, Any], Dict[str, float]]]:
     return found
 
 
+def _bare_user(user: Optional[str]) -> str:
+    """'PC\\name', 'name@domain' or 'name' as 'name', lowercased; "" for None."""
+    return (user or "").split("@")[0].replace("/", "\\").split("\\")[-1].lower()
+
+
+def _agent_user() -> str:
+    """The separate agent user's bare name, or "" when agents run as the maintainer."""
+    try:
+        return _bare_user(isolation.agent_user())
+    except OSError:  # a misconfigured agent user: the runner reports that itself
+        return ""
+
+
 def find_server(servers: Optional[List[Dict[str, Any]]] = None
                 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, float]], Optional[str]]:
-    """The model server to measure, its counters now, and why there is none."""
+    """The model server to measure, its counters now, and why there is none. A server the separate agent user
+    runs is never measured: it may be one an earlier task's agent left behind, serving made-up /metrics."""
     servers = local_servers.list_servers() if servers is None else servers
+    agent = _agent_user()
+    theirs = [s for s in servers if agent and _bare_user(s.get("user")) == agent]
+    servers = [s for s in servers if s not in theirs]
     listed = [s for s in servers if s["kind"] in SOURCES and s.get("port")]
+    if not listed and theirs:  # don't probe the ports either: what answers there may be the agent's
+        return None, None, (f"only the agent user {agent} runs a model server "
+                            f"({', '.join(str(s['pid']) for s in theirs)}): not measured")
     if listed:
         answering = [(s, c) for s in listed for c in [read_counters(s["port"], s["kind"])] if c is not None]
     else:
@@ -254,7 +277,9 @@ def process_tree(pid: Optional[int]) -> set:
 
 
 class Sampler:
-    """Collects one (vram_gb, util_pct, power_w) per GPU per tick; a subclass fills ``gpus`` and ``series``."""
+    """Collects one (vram_gb, util_pct, power_w, shared_gb) per GPU per tick; a subclass fills ``gpus`` and
+    ``series``. shared_gb is system memory the GPU has mapped (GTT on Linux, "Shared Usage" on Windows): on an
+    APU such as Strix Halo the model's weights sit there, not in the small VRAM carve-out."""
 
     vendor = ""
 
@@ -263,8 +288,7 @@ class Sampler:
         self.server_pids = process_tree(server_pid)
         self.interval_s = interval_s
         self.gpus: Dict[str, str] = {}  # id -> name, in order
-        self.series: Dict[str, List[Tuple[Optional[float], Optional[float], Optional[float]]]] = {}
-        self.extra: Dict[str, Dict[str, float]] = {}  # id -> extra peaks (Windows shared memory)
+        self.series: Dict[str, List[Tuple[Optional[float], ...]]] = {}
         self.in_use: List[str] = []  # GPUs the model server uses, when that could be told
         self.reasons: Dict[str, str] = {}  # field -> why it is null for every GPU
         self.error: Optional[str] = None
@@ -272,9 +296,10 @@ class Sampler:
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
 
-    def add(self, gpu: str, vram_gb: Optional[float], util: Optional[float], power: Optional[float]) -> None:
+    def add(self, gpu: str, vram_gb: Optional[float], util: Optional[float], power: Optional[float],
+            shared_gb: Optional[float] = None) -> None:
         with self._lock:
-            self.series.setdefault(gpu, []).append((vram_gb, util, power))
+            self.series.setdefault(gpu, []).append((vram_gb, util, power, shared_gb))
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._guarded, name="telemetry-gpu", daemon=True)
@@ -362,10 +387,12 @@ class AmdSysfs(Sampler):
     def sample(self) -> None:
         for c in self.cards:
             vram = _num(_read(os.path.join(c["dev"], "mem_info_vram_used")))
+            gtt = _num(_read(os.path.join(c["dev"], "mem_info_gtt_used")))
             power = _num(_read(c["power"])) if c["power"] else None
             self.add(c["id"], None if vram is None else vram / GIB,
                      _num(_read(os.path.join(c["dev"], "gpu_busy_percent"))),
-                     None if power is None else power / 1e6)  # microwatts
+                     None if power is None else power / 1e6,  # microwatts
+                     None if gtt is None else gtt / GIB)
 
     def loop(self) -> None:
         self.sample()
@@ -405,20 +432,29 @@ class Streaming(Sampler):
         self.proc = subprocess.Popen(self.command(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                      stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                                      creationflags=flags)
-        for text in self.proc.stdout:
+        try:
             if self._stop.is_set():
-                break
-            if text.strip():
-                self.line(text)
+                return  # stop() ran before the child existed: it had nothing to end, so this does
+            for text in self.proc.stdout:
+                if self._stop.is_set():
+                    break
+                if text.strip():
+                    self.line(text)
+        finally:
+            self._end()
+
+    def _end(self) -> None:
+        proc = self.proc
+        if proc and proc.poll() is None:
+            proc.terminate()  # our own child, by its handle
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
     def stop(self) -> None:
         self._stop.set()
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()  # our own child, by its handle
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
+        self._end()
         super().stop()
 
 
@@ -490,6 +526,9 @@ class WindowsCounters(Streaming):
             else:
                 self.columns.append(("", "", None))
         luids = list(dict.fromkeys(c[1] for c in self.columns if c[0] == "dedicated"))
+        if not luids:  # typeperf printed a header but none of the GPU counters asked for
+            self.error = ("typeperf found none of the GPU memory counters: their names are localized on a "
+                          "non-English Windows, and only the English ones are asked for")
         for luid in luids:
             self.gpus[luid] = luid
         named = self.in_use if self.in_use else luids
@@ -520,10 +559,8 @@ class WindowsCounters(Streaming):
                 engines[(luid, key)] = engines.get((luid, key), 0.0) + v
         for luid in self.gpus:
             busy = [v for (lu, _), v in engines.items() if lu == luid]
-            self.add(luid, ded[luid] / GIB if luid in ded else None, min(100.0, max(busy)) if busy else None, None)
-            if luid in shared:
-                peak = self.extra.setdefault(luid, {})
-                peak["shared_peak_gb"] = max(peak.get("shared_peak_gb", 0.0), round(shared[luid] / GIB, 2))
+            self.add(luid, ded[luid] / GIB if luid in ded else None, min(100.0, max(busy)) if busy else None, None,
+                     shared[luid] / GIB if luid in shared else None)
 
 
 def windows_adapters() -> List[Tuple[str, str]]:
@@ -540,11 +577,18 @@ def nvidia_smi_works(exe: Sequence[str] = ("nvidia-smi",)) -> bool:
 def pick_sampler(server_pid: Optional[int], interval_s: float = INTERVAL_S) -> Tuple[Optional[Sampler], Optional[str]]:
     """The GPU sampler for this PC, or why there is none."""
     if sys.platform == "win32":
-        if nvidia_smi_works():
-            return NvidiaSmi(server_pid, interval_s), None
-        if not shutil.which("typeperf"):
+        nvidia = NvidiaSmi(server_pid, interval_s) if nvidia_smi_works() else None
+        typeperf = shutil.which("typeperf")
+        adapters = windows_adapters() if typeperf else []
+        others = [n for n, maker in adapters  # not NVIDIA's, and not a remote or basic display adapter
+                  if not any(v in maker.lower() for v in ("nvidia", "microsoft", "standard display types"))]
+        # nvidia-smi sees only NVIDIA GPUs. On a box that also has a Radeon (an iGPU next to an NVIDIA dGPU), the
+        # model server may run on the Radeon (Vulkan), and on WDDM nvidia-smi rarely lists the server's pid: then
+        # the counters, which see every adapter, decide. nvidia-smi is kept when it sees the server, or is alone.
+        if nvidia and (nvidia.in_use or not others or not typeperf):
+            return nvidia, None
+        if not typeperf:
             return None, "no nvidia-smi and no typeperf"
-        adapters = windows_adapters()
         amd = [n for n, maker in adapters if "advanced micro devices" in maker.lower() or "radeon" in n.lower()]
         vendor = "amd" if amd else "other"
         return WindowsCounters(server_pid, interval_s, vendor, amd or [n for n, _ in adapters]), None
@@ -573,8 +617,8 @@ def _stats(values: List[Optional[float]]) -> Tuple[Optional[float], Optional[flo
 
 def gpu_block(sampler: Optional[Sampler], reason: Optional[str]) -> Dict[str, Any]:
     out: Dict[str, Any] = {"vendor": sampler.vendor if sampler else None, "gpus": [], "gpu_scope": None,
-                           "samples": 0, "vram_peak_gb": None, "vram_mean_gb": None, "util_mean_pct": None,
-                           "power_mean_w": None, "per_gpu": [], "reason": reason}
+                           "samples": 0, "vram_peak_gb": None, "vram_mean_gb": None, "shared_peak_gb": None,
+                           "util_mean_pct": None, "power_mean_w": None, "per_gpu": [], "reason": reason}
     if sampler is None:
         return out
     with sampler._lock:  # pylint: disable=protected-access
@@ -593,9 +637,10 @@ def gpu_block(sampler: Optional[Sampler], reason: Optional[str]) -> Dict[str, An
         vp, vm = _stats([x[0] for x in s])
         _, um = _stats([x[1] for x in s])
         _, pm = _stats([x[2] for x in s])
+        sp, _ = _stats([x[3] for x in s])
         out["per_gpu"].append({"id": g, "name": name, "in_scope": g in scope, "samples": len(s),
-                               "vram_peak_gb": _r(vp, 2), "vram_mean_gb": _r(vm, 2), "util_mean_pct": _r(um),
-                               "power_mean_w": _r(pm), **sampler.extra.get(g, {})})
+                               "vram_peak_gb": _r(vp, 2), "vram_mean_gb": _r(vm, 2), "shared_peak_gb": _r(sp, 2),
+                               "util_mean_pct": _r(um), "power_mean_w": _r(pm)})
     out["gpus"] = [sampler.gpus[g] for g in scope]
     n = min((len(series.get(g, [])) for g in scope), default=0)
     out["samples"] = n
@@ -609,6 +654,7 @@ def gpu_block(sampler: Optional[Sampler], reason: Optional[str]) -> Dict[str, An
 
         vp, vm = _stats(total(0))
         out["vram_peak_gb"], out["vram_mean_gb"] = _r(vp, 2), _r(vm, 2)
+        out["shared_peak_gb"] = _r(_stats(total(3))[0], 2)  # None where there is no such counter (NVIDIA)
         util = [None if any(x[1] is None for x in row) else mean(x[1] for x in row) for row in rows]  # type: ignore
         out["util_mean_pct"] = _r(_stats(util)[1])
         out["power_mean_w"] = _r(_stats(total(2))[1])
@@ -691,7 +737,7 @@ def kernel_hits(lines: Sequence[str]) -> List[Hit]:
 
 def windows_hits(text: str) -> List[Hit]:
     """WIN_FAULT_PS's events: a TDR is a timeout, an nvlddmkm event is read by its Xid, an AMD driver event by its
-    message."""
+    message. The message is matched in English: on a non-English Windows an AMD driver event counts as "other"."""
     hits: List[Hit] = []
     for row in text.splitlines():
         if not row.startswith("EVENT|"):
@@ -842,7 +888,10 @@ def line(block: Dict[str, Any]) -> str:
         return "n/a" if x is None else fmt.format(x)
 
     bits = [f"prefill {val(s.get('prefill_tok_s'), '{:.0f}')} tok/s", f"decode {val(s.get('decode_tok_s'), '{:.1f}')} tok/s",
-            f"peak VRAM {val(g.get('vram_peak_gb'), '{:.1f}')} GB", f"util {val(g.get('util_mean_pct'), '{:.0f}')}%"]
+            f"peak VRAM {val(g.get('vram_peak_gb'), '{:.1f}')} GB"]
+    if g.get("shared_peak_gb") is not None:  # an APU's model sits in shared memory: VRAM alone would understate it
+        bits.append(f"peak shared {g['shared_peak_gb']:.1f} GB")
+    bits.append(f"util {val(g.get('util_mean_pct'), '{:.0f}')}%")
     if g.get("power_mean_w") is not None:
         bits.append(f"{g['power_mean_w']:.0f} W")
     f = block.get("faults") or {}

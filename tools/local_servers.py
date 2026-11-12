@@ -5,8 +5,9 @@
     python tools/local_servers.py        # JSON: every llama-server, Ollama, LM Studio, Lemonade, vLLM and SGLang process
 
 Each server is ``{"pid", "kind", "name", "model", "port", "path"}``, parsed from its command line; a
-field the command line doesn't give is None. Uses psutil when it is installed; on Windows without
-it, one PowerShell ``Get-CimInstance`` call. Elsewhere without psutil the list is empty.
+field the command line doesn't give is None. Uses psutil when it is installed, which also gives the
+process's ``"user"`` (None when it can't be read); on Windows without it, one PowerShell
+``Get-CimInstance`` call, with no user. Elsewhere without psutil the list is empty.
 
 vLLM and SGLang are Python programs, so they are told apart by their command line (``vllm serve``,
 ``vllm.entrypoints.openai.api_server``, ``sglang.launch_server``), not their process name. In a Docker
@@ -113,6 +114,10 @@ def _from_psutil() -> List[Dict[str, Any]]:
             args = []
         server = describe(proc.info["pid"], name, args)
         if server:
+            try:
+                server["user"] = proc.username()
+            except (psutil.Error, OSError):
+                server["user"] = None  # another user's process on Windows: access denied
             found.append(server)
     return found
 
