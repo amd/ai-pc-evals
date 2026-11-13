@@ -14,7 +14,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-latest]
-        python: ["3.13"]
+        # 3.14: the Linux eval boxes' Python (Ubuntu 26.04), and on Windows the one that ships zlib-ng (#60)
+        python: ["3.13", "3.14"]
         include:  # and the oldest Python the docs allow, on the platform the evals run on
           - os: windows-latest
             python: "3.12"
