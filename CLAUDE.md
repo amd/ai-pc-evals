@@ -100,7 +100,7 @@ shellcheck -S warning $(git ls-files "*.sh")
 
 - **Every change goes through a pull request against `main`.** Never push to `main` and never force-push a shared branch. Branch from an up-to-date `origin/main`: a local checkout can sit on an old, already-merged branch.
 - **Every `.py`, `.sh` and `.ps1` file starts with the two-line header** (after a shebang, if any): `# Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.` and `# SPDX-License-Identifier: MIT`. `tests/test_license.py` checks it. Task inputs (`knowledgework/assistant/corpus/`, `knowledgework/fixtures/`, `knowledgework/developer/toybox/`) and probes are exempt: their bytes are part of the task.
-- **Match the surrounding code**: its naming, comment density and idiom. Docs are written for newcomers: plain words, short sentences, the simplest path first, every command checked against the code.
+- **Match the surrounding code**: its naming, comment density and idiom. Docs are written for newcomers: plain words, short sentences, the simplest path first, every command checked against the code. Every relative link and `#anchor` in the Markdown must resolve: a test checks it (`tools/check_doc_links.py`).
 - **A new dependency** goes in `requirements.txt` (and `constraints.txt` if it affects how inputs are built or what the judge sees), and must be under a permissive licence: no GPL or AGPL in anything the evals run. List new third-party data in `THIRD_PARTY_NOTICES.md`.
 - **Never fetch from a site whose terms forbid automated access** (Reddit, X, LinkedIn, perplexity.ai and the like) and never work around bot protection. Sources are downloaded by direct URL from their publishers and pinned by SHA-256.
 
