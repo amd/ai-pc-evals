@@ -89,7 +89,7 @@ jobs:
           {
             echo "The weekly check of \`tools/agents/agents.json\` against the agent CLIs' latest releases failed: $RUN_URL"
             echo
-            printf '%s\n' "${REPORT:-The check didn't get to run: see the run's log.}"
+            printf '%s\n' "${REPORT:-The check did not get to run: see the log of the run.}"
             echo
             echo "Fix the entry (its \`cmd\` and its \`about\` text), then run \`python tools/check_agent_flags.py\` where that CLI is installed."
           } > body.md
