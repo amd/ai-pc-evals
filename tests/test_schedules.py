@@ -212,12 +212,16 @@ def test_posix_for_real_new_cron_lines_and_timers_are_contained_and_earlier_ones
     each contained; a timer that existed before is left alone. As you (a same-user run) and as the agent user."""
     user = REAL_AGENT_USER if as_agent else ""
     manager = schedules._user_manager(user)
-    assert manager, "no systemd user manager to run timers: loginctl enable-linger (see docs/ISOLATION.md)"
-    if "Failed to connect" in _as_user(user, manager, "systemctl", "--user", "is-system-running").stderr:
-        # An earlier real test stopped the agent user's processes (pkill -KILL -u), its user manager among them.
-        unit = f"user@{os.stat(manager).st_uid}.service"
+    if not manager or "Failed to connect" in _as_user(user, manager, "systemctl", "--user", "is-system-running").stderr:
+        # An earlier real test stopped the agent user's processes (pkill -KILL -u), its user manager among them,
+        # and on some systems its runtime folder with it.
+        import pwd  # noqa: PLC0415  (POSIX only)
+
+        unit = f"user@{pwd.getpwnam(user).pw_uid if user else os.getuid()}.service"
         if subprocess.run(["sudo", "-n", "systemctl", "start", unit], capture_output=True, timeout=60).returncode:
             pytest.skip(f"the user manager isn't running and couldn't be started: sudo systemctl start {unit}")
+        manager = schedules._user_manager(user)
+    assert manager, "no systemd user manager to run timers: loginctl enable-linger (see docs/ISOLATION.md)"
     tag = uuid.uuid4().hex[:8]
     old, new, transient = f"kw-test-old-{tag}", f"kw-test-new-{tag}", f"kw-test-run-{tag}"
     cron_line = f"17 3 * * * /bin/true kw-test-{tag}"
