@@ -882,6 +882,7 @@ def test_a_task_whose_audit_crashes_is_still_recorded_protected_and_sealed(tmp_p
     protected, sealed = [], []
     monkeypatch.setattr(run_eval.isolation, "protect", lambda paths, user: protected.extend(paths))
     monkeypatch.setattr(run_eval.isolation, "allow", lambda path, user: None)
+    monkeypatch.setattr(run_eval.isolation, "traverse_only", lambda folder, user: None)  # no real setfacl here
     monkeypatch.setattr(run_eval, "seal_turn", lambda run_dir, tid, folder: sealed.append(tid))
 
     def locked(*a):

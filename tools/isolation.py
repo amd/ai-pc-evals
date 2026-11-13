@@ -204,6 +204,10 @@ _POSIX_RUN = ('cd -- "$1" || exit 98; shift; '
               'while IFS= read -r -d "" kv && [ -n "$kv" ]; do export -- "$kv"; done; exec "$@"')
 
 
+#: A name bash's ``export`` accepts.
+SHELL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 def overlay_records(overlay: Mapping[str, str]) -> bytes:
     """The environment overlay as _POSIX_RUN reads it from stdin."""
     return b"".join(f"{k}={v}".encode("utf-8") + b"\0" for k, v in sorted(overlay.items())) + b"\0"
@@ -230,8 +234,11 @@ def _run_as_posix(user: str, cmd: List[str], *, timeout: float, cwd: Path, env: 
     # set through git's environment config: for this agent's process tree only, in no git config file.
     overlay = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": "*",
                **env_overlay(env), **(always or {})}
-    if any("\0" in k + v or "=" in k or not k for k, v in overlay.items()):
-        raise OSError("an environment variable for the agent has an empty name, or a NUL or '=' in its name")
+    if any("\0" in v or not SHELL_NAME.fullmatch(k) for k, v in overlay.items()):
+        bad = sorted(k for k, v in overlay.items() if "\0" in v or not SHELL_NAME.fullmatch(k))
+        # bash's export refuses such a name, and the variable would be dropped with only a line on stderr
+        raise OSError(f"environment variable(s) for the agent that a shell can't set: {', '.join(map(repr, bad))} "
+                      "(a name is letters, digits and _, not starting with a digit; no NUL in a value)")
     launch = sudo(user, ["bash", "-l", "-c", _POSIX_RUN, "kw-run", str(cwd), *cmd])
     timed_out, note = False, ""
     # Output goes to files and the wait is on the process, not on its pipes (as in base.run_capped): a background
@@ -489,11 +496,27 @@ def can_read(path: Path, user: str) -> Optional[bool]:
     return True if granted else None
 
 
+def traverse_only(folder: Path, user: str) -> None:
+    """Let *user* pass through *folder* (to the task folder it is given) but not list it or create entries in it
+    (Linux: ``u:<user>:--x``; the eval home's default ACL gave it rwx). Grading writes fixed names there
+    (scorecard.json, eval-version.json): an entry the agent user planted at one could redirect that write (#55).
+    On Windows grading writes those files exclusively instead (kwengine ``write_new``)."""
+    if WINDOWS:
+        return
+    done = subprocess.run(["setfacl", "-m", f"u:{user}:--x", str(folder)], capture_output=True, text=True,
+                          errors="replace")
+    if done.returncode != 0:
+        raise OSError(f"could not limit {user} to passing through {folder}: "
+                      f"{((done.stdout or '') + (done.stderr or '')).strip()}")
+
+
 def sticky_folders(run_dir: Path, home: Path) -> List[Path]:
     """The folders a run in *run_dir* needs the sticky bit on (Linux, Layer 4): the eval home *home*, every folder
-    from it down to the run folder, and the work root ``.runas`` with its probe root (made here when missing)."""
+    from it down to the run folder, and the work root ``.runas`` with its probe root (made here when missing).
+    A run folder outside the eval home (``--out``) gets it alone: its parent may be any folder of yours, even
+    your home folder, and the eval home's grant doesn't reach it."""
     home, run_dir = home.resolve(), run_dir.resolve()
-    chain = [run_dir, run_dir.parent]
+    chain = [run_dir]
     if home in run_dir.parents:
         chain = [run_dir, *[p for p in run_dir.parents if home in p.parents]]
     probes = home / ".runas" / "probes"

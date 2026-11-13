@@ -287,14 +287,21 @@ VENV_PACKAGE_DIRS = frozenset({"bin", "Scripts", "lib", "lib64", "Lib", "include
 
 def _is_venv(folder: Path) -> bool:
     """A Python virtual environment: its pyvenv.cfg names the base Python (``home =``), and it has its own
-    interpreter. A pyvenv.cfg dropped into a folder alone doesn't make it one."""
+    interpreter, a link to the base one or a real file. A pyvenv.cfg and an empty "python" dropped into a folder
+    don't make it one, and so don't hide its bin/, lib/ and share/ from the sweep."""
     try:
         cfg = (folder / "pyvenv.cfg").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
     if not re.search(r"^\s*home\s*=", cfg, re.MULTILINE):
         return False
-    return (folder / "Scripts" / "python.exe").is_file() or any((folder / "bin").glob("python*"))
+
+    def interpreter(p: Path) -> bool:
+        try:
+            return p.is_symlink() or (p.is_file() and p.stat().st_size > 0)
+        except OSError:
+            return False
+    return interpreter(folder / "Scripts" / "python.exe") or any(map(interpreter, (folder / "bin").glob("python*")))
 
 
 def walk_files(roots: Sequence[Path], skip: Sequence[Path], deadline: float, seen: Set[str],
