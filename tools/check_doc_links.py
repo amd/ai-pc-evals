@@ -9,7 +9,8 @@ points nowhere is what a newcomer follows first. This reads every tracked .md fi
 everyday corpus, the fixtures, the planted toybox project, the prompts: their bytes are part of a task), skips
 code blocks, inline code and links to other sites, and checks each relative link and its anchor against
 GitHub's heading ids. Links into answers/ are accepted while answers/ doesn't exist yet: it appears when the
-answers are published. Exit 1 on a broken link. CI runs it (lint.yml). Standard library only.
+answers are published. Exit 1 on a broken link. CI runs it through pytest (tests/test_check_doc_links.py).
+Standard library only.
 """
 from __future__ import annotations
 
