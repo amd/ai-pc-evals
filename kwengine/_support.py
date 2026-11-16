@@ -6,7 +6,7 @@
 - ``agent_env`` and ``Scrubber`` (credentials out of the probe's reach and out of every artifact)
 - ``clip``
 - ``PERPLEXITY_CREDITS``
-- ``DEFAULT_CLAUDE_MODEL`` (the judge's default)
+- ``DEFAULT_JUDGE_MODEL`` (the judge's default)
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 
 #: The judge's model unless ``--judge-model`` names another.
-DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"
+DEFAULT_JUDGE_MODEL = "claude-opus-5-5"
 #: A cost read from the credits Perplexity's app showed.
 PERPLEXITY_CREDITS = "perplexity_credits"
 
@@ -537,7 +537,7 @@ def api_model_id(model: str) -> str:
     name = (model or "").strip()
     if name.lower().endswith("[1m]"):  # Claude Code's 1M-context suffix: the API ids have 1M context already
         name = name[: -len("[1m]")]
-    return API_MODEL_ALIASES.get(name.lower(), name) or DEFAULT_CLAUDE_MODEL
+    return API_MODEL_ALIASES.get(name.lower(), name) or DEFAULT_JUDGE_MODEL
 
 
 def judge_model_id(model: str, backend: str) -> str:

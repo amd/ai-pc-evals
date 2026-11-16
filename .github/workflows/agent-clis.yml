@@ -1,0 +1,100 @@
+name: agent CLIs
+
+# The flags tools/agents/agents.json passes to the third-party agent CLIs (OpenCode, Pi, OpenClaw, Hermes), checked
+# against each CLI's latest release (#61): those CLIs change quickly, and a flag one drops fails every task.
+# Not a required check: a new release shouldn't block unrelated pull requests. The weekly run opens (or comments
+# on) one issue instead, and closes it once the entries match again.
+on:
+  schedule:
+    - cron: "17 6 * * 1"  # Mondays 06:17 UTC
+  pull_request:
+    paths:
+      - "tools/agents/**"
+      - "tools/check_agent_flags.py"
+      - ".github/workflows/agent-clis.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Installs third-party code, so it has no write permission and no credentials.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      report: ${{ steps.check.outputs.report }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"  # Pi needs Node 22.19 or newer
+      - name: Install the agent CLIs (latest releases, from their documented sources)
+        # One that fails to install is reported by the check below as "not installed": the others still run.
+        run: |
+          set -uo pipefail
+          npm install -g @opencode/cli || echo "::warning::OpenCode did not install"
+          npm install -g --ignore-scripts @earendil-works/pi-coding-agent || echo "::warning::Pi did not install"
+          npm install -g openclaw || echo "::warning::OpenClaw did not install"
+          curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash || echo "::warning::Hermes did not install"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Check every entry's flags against its CLI's --help
+        id: check
+        run: |
+          set -uo pipefail
+          code=0
+          python tools/check_agent_flags.py --require-all --report report.md || code=$?  # the shell runs with -e
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "report<<KW_REPORT_END"
+            cat report.md
+            echo "KW_REPORT_END"
+          } >> "$GITHUB_OUTPUT"
+          exit $code
+
+  # The weekly run only: opens or updates one issue. Installs and runs nothing from the check, and reads its
+  # report from an environment variable, never from the script text.
+  report:
+    needs: check
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.check.result }}
+          REPORT: ${{ needs.check.outputs.report }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          export KW_TITLE="agents.json passes a flag an agent CLI's latest release doesn't have"
+          title="$KW_TITLE"
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq 'map(select(.title == env.KW_TITLE)) | .[0].number // empty')
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "The weekly check passes again: $RUN_URL"
+            fi
+            exit 0
+          fi
+          {
+            echo "The weekly check of \`tools/agents/agents.json\` against the agent CLIs' latest releases failed: $RUN_URL"
+            echo
+            printf '%s\n' "${REPORT:-The check did not get to run: see the log of the run.}"
+            echo
+            echo "Fix the entry (its \`cmd\` and its \`about\` text), then run \`python tools/check_agent_flags.py\` where that CLI is installed."
+          } > body.md
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file body.md
+          else
+            gh issue create --title "$title" --body-file body.md
+          fi
