@@ -93,7 +93,7 @@ shellcheck -S warning $(git ls-files "*.sh")
 ```
 
 - **Run the tests with the credential store blocked**, as above. Some tests ask the OS credential store for an answers passphrase and, on a maintainer's PC where one is stored, decrypt answer material into memory. You don't need that, and it is answer material in your process. Tests that need it skip with a reason.
-- **Judge a result by its exit code**, never by output piped through `tail` or `head`, which hides it. CI runs the same checks on Ubuntu and Windows (Python 3.13, plus 3.12 on Windows): keep paths, line endings and shell use working on both.
+- **Judge a result by its exit code**, never by output piped through `tail` or `head`, which hides it. CI runs the same checks on Ubuntu and Windows (Python 3.13 and 3.14, plus 3.12 on Windows): keep paths, line endings and shell use working on both.
 - The full suite takes about seven minutes. Run it in the background, or under your tool's time limit, rather than waiting on it in the foreground.
 
 ### Conventions

@@ -40,7 +40,7 @@ The tests include `tests/test_task_data.py`, which checks every task file agains
 
 ## How changes are merged
 
-Every change goes through a pull request against `main`. Nobody pushes to `main` directly, and nobody force-pushes. CI runs two workflows on Ubuntu and Windows with Python 3.13:
+Every change goes through a pull request against `main`. Nobody pushes to `main` directly, and nobody force-pushes. CI runs two workflows on Ubuntu and Windows: tests with Python 3.13 and 3.14 (and 3.12 on Windows), lint with 3.13:
 
 - **tests**: `pytest`, and a smoke test (`tools/smoke.py`) that builds the release zip, installs it in a clean folder and runs `kw-00-smoke` end to end with a stub agent and `--no-grade`.
 - **lint**: `ruff`, `shellcheck`, `actionlint` on the workflows (with shellcheck on their scripts), that every JSON file parses, that PowerShell scripts parse, and that scripts have the right line endings.
