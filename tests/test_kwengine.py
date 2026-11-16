@@ -1309,7 +1309,7 @@ def test_the_cli_round_trip_prints_what_the_runners_parse(tmp_path, monkeypatch,
     _fake_judge(monkeypatch)
     cli.main(["grade", str(run_dir)])
     out = capsys.readouterr().out
-    assert f"[JUDGE] {ft.DEFAULT_CLAUDE_MODEL}" in out and ft.DEFAULT_CLAUDE_MODEL == "claude-opus-5-5"
+    assert f"[JUDGE] {ft.DEFAULT_JUDGE_MODEL}" in out and ft.DEFAULT_JUDGE_MODEL == "claude-opus-5-5"
     assert "1/1 passed" in out and "[SCORECARD]" in out
 
 
