@@ -45,6 +45,8 @@ Every change goes through a pull request against `main`. Nobody pushes to `main`
 - **tests**: `pytest`, and a smoke test (`tools/smoke.py`) that builds the release zip, installs it in a clean folder and runs `kw-00-smoke` end to end with a stub agent and `--no-grade`.
 - **lint**: `ruff`, `shellcheck`, `actionlint` on the workflows (with shellcheck on their scripts), that every JSON file parses, that PowerShell scripts parse, and that scripts have the right line endings.
 
+A third workflow, **agent CLIs**, runs weekly and on pull requests that change `tools/agents/` (not a required check): it installs the latest OpenCode, Pi, OpenClaw and Hermes and checks every flag `agents.json` passes them (`tools/check_agent_flags.py`). The weekly run opens one issue when a flag is gone.
+
 A pull request merges once both are green and a maintainer has reviewed it.
 
 ## Changes to ground truth
