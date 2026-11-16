@@ -226,6 +226,16 @@ def _path(value: Optional[str]) -> Optional[Path]:
     return Path(value).expanduser() if value else None
 
 
+def require_psutil() -> None:
+    """Stop before any work when psutil, a requirement, is missing: grading kills a probe's process tree with it
+    (and the recorder checks ffmpeg with it), and without it a probe that hangs would be left running."""
+    try:
+        import psutil  # noqa: F401, PLC0415  pylint: disable=import-outside-toplevel,unused-import
+    except ImportError as exc:
+        raise RuntimeError(f"psutil is missing from this Python ({sys.executable}): install the requirements "
+                           "first: python -m pip install -r requirements.txt -c constraints.txt") from exc
+
+
 def run(args: argparse.Namespace) -> None:
     """One subcommand; errors a user can fix print and exit 2."""
 
@@ -234,6 +244,8 @@ def run(args: argparse.Namespace) -> None:
 
     action = args.kw_action
     try:
+        if action in ("grade", "rec-start", "rec-stop"):
+            require_psutil()
         if action == "rec-start":
             from . import screen_record  # pylint: disable=import-outside-toplevel
 
