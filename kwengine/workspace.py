@@ -27,6 +27,7 @@ import shutil
 import time
 import urllib.request
 import zipfile
+import zlib
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -55,7 +56,15 @@ IGNORED_DIRS = frozenset({"__pycache__", ".pytest_cache", ".git"})
 IGNORED_FILES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
 #: Office files are zip archives the fixture build compresses (build_fixtures.normalize_ooxml): their bytes depend
 #: on the zlib build (CPython 3.14 on Windows ships zlib-ng), so the baseline also records what is inside them.
+#: These are the zip formats that build writes: a new one (.xlsm, .odt...) must be added here, or its inputs go back
+#: to being compared by their compressed bytes.
 OFFICE_SUFFIXES = frozenset({".docx", ".xlsx", ".pptx"})
+#: What zipfile raises for an archive it can't read: not a zip or a bad CRC (BadZipFile), corrupt deflate data
+#: (zlib.error), a bad offset ("negative seek") or the file itself (OSError), a stream cut short (EOFError), an
+#: entry name flagged UTF-8 that isn't (UnicodeDecodeError), an encrypted entry (RuntimeError), an unsupported
+#: method or version (NotImplementedError). Found by corrupting an Office file thousands of ways.
+UNREADABLE_ZIP = (zipfile.BadZipFile, zlib.error, OSError, EOFError, UnicodeDecodeError, RuntimeError,
+                  NotImplementedError)
 DOWNLOAD_TIMEOUT_S = 120
 USER_AGENT = "ai-pc-evals/1.0 (+https://github.com/amd/ai-pc-evals)"
 
@@ -219,7 +228,8 @@ def contents_digest(path: Path) -> Optional[str]:
                         digest.update(chunk)
                 entries.append((info.filename, digest.hexdigest()))
     # Unreadable (corrupt, truncated, encrypted, odd compression): no digest, so only its raw SHA-256 can match.
-    except Exception:  # pylint: disable=broad-exception-caught  # noqa: BLE001
+    # Anything else is a bug here, and raises rather than fall back to the zlib-sensitive check unseen.
+    except UNREADABLE_ZIP:
         return None
     if len({name for name, _ in entries}) != len(entries):
         return None
