@@ -30,11 +30,16 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - run: python -m pip install ruff==0.17.4 shellcheck-py==0.11.0.1
+      - run: python -m pip install ruff==0.17.4 shellcheck-py==0.11.0.1 actionlint-py==1.7.12.25
       - name: Python (undefined names, unused code, syntax)
         run: ruff check --output-format github .
       - name: Shell scripts
-        run: shellcheck -S warning $(git ls-files '*.sh')
+        run: |
+          mapfile -t files < <(git ls-files '*.sh')
+          shellcheck -S warning "${files[@]}"
+      - name: Workflows (actionlint, with shellcheck on every run block)
+        if: runner.os == 'Linux'
+        run: actionlint -color
       - name: JSON files parse
         run: for f in $(git ls-files '*.json' ':!knowledgework/assistant/corpus/**'); do python -m json.tool "$f" >/dev/null || { echo "::error file=$f::invalid JSON"; exit 1; }; done
       - name: Scripts are committed with LF
@@ -56,3 +61,22 @@ jobs:
             if ($errors) { $errors | ForEach-Object { "::error file=$f::$_" }; $failed = $true }
           }
           if ($failed) { exit 1 }
+
+  # A pull request that changes a fingerprinted file (tools/evalversion.py) must say so in the CHANGELOG: results
+  # graded before it are not directly comparable.
+  fingerprint-note:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0  # the merge base with the target branch
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: A fingerprinted change is noted in the CHANGELOG
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python tools/check_fingerprint_note.py --base "origin/$BASE_REF"

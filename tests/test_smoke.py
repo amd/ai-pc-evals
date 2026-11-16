@@ -47,6 +47,44 @@ def test_eval_env_drops_every_kw_setting_and_uses_its_own_homes(tmp_path):
     assert env["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
 
 
+def test_the_installed_copy_never_sees_pythonpath(tmp_path):
+    """PYTHONPATH into the checkout would let the copy import a module the zip left out: a broken release passes."""
+    base = {"PATH": "p", "PYTHONPATH": str(tmp_path / "repo" / "tools"), "pythonhome": "x"}
+    assert "PYTHONPATH" not in smoke.eval_env(base, tmp_path) and "pythonhome" not in smoke.eval_env(base, tmp_path)
+    child = [sys.executable, "-c", "import os; print(os.environ.get('PYTHONPATH'))"]
+    assert smoke.run(child, cwd=tmp_path, env={**smoke.clean_env(), "PYTHONPATH": "x"}).strip() == "None"
+
+
+def test_a_hung_step_ends_here_with_what_it_printed(tmp_path, capsys):
+    """CI cancels a job at its timeout with nothing from a captured step: the step's own, shorter limit and
+    output echoed as it comes leave the cause in the log."""
+    hung = [sys.executable, "-c", "import sys, time; print('installing x...', flush=True); "
+            "print('a warning', file=sys.stderr, flush=True); time.sleep(60)"]
+    with pytest.raises(smoke.SmokeError, match="did not finish in 2s"):
+        smoke.run(hung, cwd=tmp_path, timeout=2)
+    out = capsys.readouterr()
+    assert "installing x..." in out.out and "a warning" in out.err
+
+
+def test_a_step_returns_its_stdout_and_fails_on_an_error(tmp_path):
+    ok = [sys.executable, "-c", "import sys; print('listed'); print('noise', file=sys.stderr)"]
+    assert smoke.run(ok, cwd=tmp_path).strip() == "listed"
+    with pytest.raises(smoke.SmokeError, match="exited 3"):
+        smoke.run([sys.executable, "-c", "raise SystemExit(3)"], cwd=tmp_path)
+
+
+def test_the_steps_share_one_budget_that_ends_before_the_ci_job_does(monkeypatch):
+    workflow = (smoke.REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    job = workflow[workflow.index("\n  smoke:"):]
+    minutes = int(job.split("timeout-minutes:", 1)[1].split()[0])
+    assert smoke.STEP_TIMEOUT_S <= smoke.DEADLINE_S < minutes * 60 - 60  # a minute for checkout and setup-python
+    monkeypatch.setattr(smoke, "_deadline", smoke.time.monotonic() + 30)
+    assert smoke._budget(300) <= 30
+    monkeypatch.setattr(smoke, "_deadline", smoke.time.monotonic() - 1)
+    with pytest.raises(smoke.SmokeError, match="out of time"):
+        smoke._budget(300)
+
+
 def test_stub_outputs_are_the_deliverables_or_its_own_file():
     assert smoke.stub_outputs({"deliverables": ["summary.md", "out/a.xlsx"]}) == ["summary.md", "out/a.xlsx"]
     assert smoke.stub_outputs({"deliverables": []}) == [smoke.STUB_OUTPUT]
