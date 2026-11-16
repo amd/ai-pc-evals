@@ -47,8 +47,8 @@ jobs:
         id: check
         run: |
           set -uo pipefail
-          python tools/check_agent_flags.py --require-all --report report.md
-          code=$?
+          code=0
+          python tools/check_agent_flags.py --require-all --report report.md || code=$?  # the shell runs with -e
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           {
             echo "report<<KW_REPORT_END"
