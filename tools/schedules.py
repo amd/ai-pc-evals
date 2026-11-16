@@ -376,12 +376,13 @@ def snapshot(user: str = "") -> Optional[Set[str]]:
         found |= {"timer: " + ln.split()[0] for ln in files.splitlines() if ln.split()}
         found |= {"timer: " + [t for t in ln.split() if t.endswith(".timer")][-1]
                   for ln in loaded.splitlines() if any(t.endswith(".timer") for t in ln.split())}
-        # A service enabled to start with the user's manager (at login), not only on a timer.
-        services = _run(_systemctl(user, manager, "list-unit-files", "--type=service", "--state=enabled,linked",
-                                   "--no-legend", "--plain"))
+        # A service enabled to start with the user's manager (at login), not only on a timer. Filtered here, not
+        # with --state: list-unit-files exits 1 when nothing matches, which would read as "couldn't list".
+        services = _run(_systemctl(user, manager, "list-unit-files", "--type=service", "--no-legend", "--plain"))
         if services is None:
             return None
-        found |= {"service: " + ln.split()[0] for ln in services.splitlines() if ln.split()}
+        found |= {"service: " + ln.split()[0] for ln in services.splitlines()
+                  if len(ln.split()) > 1 and ln.split()[1] in ("enabled", "linked")}
     return found
 
 
