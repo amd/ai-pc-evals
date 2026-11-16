@@ -5,6 +5,7 @@
 The files in tests/agent_traces are real outputs, trimmed (long strings cut): OpenCode 2.2.7, Pi 1.5.0, OpenClaw
 2026.11.2 and Hermes Agent 0.23.0 on Ubuntu against llama-server b12211 at a 16K context, asked to read a missing file and then
 notes.txt ("two-reads"), or three files of about 10K tokens each ("big-reads", "over-window").
+Machine paths and session ids are replaced, and the OpenClaw log keeps only the lines read here.
 """
 import json
 import sys
@@ -72,7 +73,7 @@ def test_openclaw_gives_totals_only_so_its_calls_are_not_listed():
 def test_openclaw_logs_its_overflow_and_compaction_on_stderr_once_per_request():
     t = T.scan_stderr(T.parse("openclaw", read("openclaw-over-window.json")), read("openclaw-over-window.stderr"))
     c = T.context(t)
-    # Four log lines describe the one rejected request.
+    # Two log lines describe the one rejected request.
     assert (c["over_window"], c["largest_rejected_tokens"], c["window"], c["compactions"]) == (1, 29662, 16384, 1)
     assert t.answer.startswith("Code word on the last line")
 
