@@ -30,11 +30,16 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - run: python -m pip install ruff==0.17.4 shellcheck-py==0.11.0.1
+      - run: python -m pip install ruff==0.17.4 shellcheck-py==0.11.0.1 actionlint-py==1.7.12.25
       - name: Python (undefined names, unused code, syntax)
         run: ruff check --output-format github .
       - name: Shell scripts
-        run: shellcheck -S warning $(git ls-files '*.sh')
+        run: |
+          mapfile -t files < <(git ls-files '*.sh')
+          shellcheck -S warning "${files[@]}"
+      - name: Workflows (actionlint, with shellcheck on every run block)
+        if: runner.os == 'Linux'
+        run: actionlint -color
       - name: JSON files parse
         run: for f in $(git ls-files '*.json' ':!knowledgework/assistant/corpus/**'); do python -m json.tool "$f" >/dev/null || { echo "::error file=$f::invalid JSON"; exit 1; }; done
       - name: Scripts are committed with LF
