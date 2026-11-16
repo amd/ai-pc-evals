@@ -1,0 +1,130 @@
+name: dependency audit
+
+# Known vulnerabilities (PyPI and OSV advisories) in the exact packages the evals install: requirements-dev.txt
+# (which includes requirements.txt) with constraints.txt, as resolved on each system. Weekly, on pull requests
+# that change those files, and by hand. Not a required check: a new advisory shouldn't block unrelated pull
+# requests; Dependabot proposes the update. The weekly run files what it finds, for both systems, in one issue:
+# a new one at most once a week, else a comment on the one still open; it closes it once the audit is clean.
+on:
+  schedule:
+    - cron: "41 6 * * 1"  # Mondays 06:41 UTC
+  pull_request:
+    paths:
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - "constraints.txt"
+      - ".github/workflows/audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]  # Windows resolves a few packages of its own (tzdata, pywin32-ctypes)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Install the evals' packages in their own venv, and list them
+        run: |
+          python -m venv .audit-evals
+          py=.audit-evals/bin/python
+          [ -x "$py" ] || py=.audit-evals/Scripts/python.exe
+          "$py" -m pip install -q --disable-pip-version-check -r requirements-dev.txt -c constraints.txt
+          "$py" -m pip freeze --exclude-editable > frozen.txt
+          echo "$(wc -l < frozen.txt) packages"
+      - name: Audit them
+        # pip-audit runs from its own install, so its own dependencies aren't audited as the evals'. UTF-8 mode: it
+        # writes its report in the system encoding, and on Windows (cp1252) an advisory's text can stop it.
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python -m pip install -q --disable-pip-version-check pip-audit==2.10.1
+          set +e
+          python -m pip_audit -r frozen.txt --no-deps --disable-pip --desc off --progress-spinner off \
+            --format markdown --output findings.md
+          code=$?
+          set -e
+          {
+            echo "### $RUNNER_OS ($(wc -l < frozen.txt) packages)"
+            echo
+            if [ "$code" -eq 0 ]; then
+              echo "No known vulnerabilities."
+            elif [ -s findings.md ]; then
+              cat findings.md
+            else
+              echo "pip-audit stopped (exit $code) without a report: see the log of the run."
+            fi
+          } > "report-$RUNNER_OS.md"
+          cat "report-$RUNNER_OS.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+      - name: Keep the report for the weekly issue
+        if: always() && github.event_name == 'schedule'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: audit-${{ runner.os }}
+          path: report-*.md
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The weekly run only: one issue for both systems. Installs and runs nothing from the audit.
+  report:
+    needs: pip-audit
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true  # no report at all still files the issue, saying so
+        with:
+          pattern: audit-*
+          path: reports
+          merge-multiple: true
+      - name: Open, update or close the weekly issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.pip-audit.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          export KW_TITLE="Dependency audit: known vulnerabilities in the pinned packages"
+          existing=$(gh issue list --state open --search "\"$KW_TITLE\" in:title" --json number,title \
+            --jq 'map(select(.title == env.KW_TITLE)) | .[0].number // empty')
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "The weekly audit is clean again: $RUN_URL"
+            fi
+            exit 0
+          fi
+          {
+            echo "The weekly audit of the packages the evals install (requirements-dev.txt with constraints.txt) found problems: $RUN_URL"
+            echo
+            if compgen -G "reports/*.md" > /dev/null; then
+              cat reports/*.md > all.md
+              head -c 60000 all.md  # an issue body holds 65536 characters (a file: no pipe for pipefail to trip on)
+            else
+              echo "No report came back from the audit jobs: see the log of the run."
+            fi
+            echo
+            echo "Raise the package's pin in constraints.txt (or requirements.txt) to a fixed version, check the change, and the next weekly run closes this."
+          } > body.md
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file body.md
+          else
+            gh issue create --title "$KW_TITLE" --body-file body.md
+          fi
