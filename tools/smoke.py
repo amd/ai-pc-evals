@@ -251,6 +251,7 @@ def main(argv=None) -> int:
     ap.add_argument("--keep", action="store_true", help="keep the work folder after a pass (it is always kept on a failure)")
     args = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # a step's stderr is echoed as it comes
     suite, sep, task_id = args.task.partition(":")
     if not (sep and suite and task_id):
         ap.error("--task must be suite:task, e.g. smoke:kw-00-smoke")
