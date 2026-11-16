@@ -64,7 +64,8 @@ def test_other_changes_and_a_changelog_line_without_the_word_pass_or_fail_as_the
 def test_the_folder_and_file_entries_match_as_paths_not_prefixes():
     entries = ("kwengine/grade.py", "knowledgework/developer/toybox")
     assert cfn.fingerprinted(["kwengine/grade.py", "kwengine/grade.pyc", "knowledgework/developer/toybox/x",
-                              "knowledgework/developer/toybox2/x"], entries) == \
+                              "knowledgework/developer/toybox2/x",
+                              "knowledgework/developer/toybox/__pycache__/x.cpython-312.pyc"], entries) == \
         ["kwengine/grade.py", "knowledgework/developer/toybox/x"]
 
 

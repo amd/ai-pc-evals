@@ -37,8 +37,10 @@ def changed_files(base: str, repo: Path = REPO) -> List[str]:
 
 
 def fingerprinted(paths: Sequence[str], entries: Sequence[str] = evalversion.FINGERPRINTED) -> List[str]:
-    """The *paths* the task fingerprint covers: an entry itself, or anything in an entry that is a folder."""
-    return [p for p in paths if any(p == e or p.startswith(e.rstrip("/") + "/") for e in entries)]
+    """The *paths* the task fingerprint covers: an entry itself, or anything in an entry that is a folder, except
+    caches (__pycache__, .pytest_cache), which evalversion.tasks_fingerprint skips too."""
+    return [p for p in paths if not {"__pycache__", ".pytest_cache"} & set(p.split("/"))
+            and any(p == e or p.startswith(e.rstrip("/") + "/") for e in entries)]
 
 
 def changelog_lines_added(base: str, repo: Path = REPO) -> List[str]:
