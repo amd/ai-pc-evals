@@ -32,6 +32,10 @@ timeouts, other), read once from the kernel log (journalctl -k, else dmesg: amdg
 timeout lines, NVIDIA's NVRM Xid lines with their numbers) or, on Windows, the System event log (Display 4101, a
 display driver timeout, and errors and warnings from amdkmdag, amdwddmg and nvlddmkm).
 
+``context`` is the server's window for one request (llama-server: a slot's n_ctx; vLLM and SGLang: max_model_len)
+and, for llama-server, the largest prompt any request sent while the agent worked, from /slots polled every second;
+run_eval.py merges it with what the agent's own output says (tools/agents/trace.py).
+
 The result is a ``telemetry`` block in the task's result.json and one printed line. Anything that can't be
 measured is null, with the reason in ``reason``; never 0. Telemetry reads the model server and the GPU only, never
 the agent's process, and never changes a score.
@@ -821,6 +825,95 @@ def _last(err: str, rc: Optional[int]) -> str:
     return re.sub(r"^(?:dmesg|journalctl): ", "", lines[-1])[:160] if lines else f"exit code {rc}"
 
 
+# ---------------------------------------------------------------- context window (#72)
+def _json(port: int, path: str) -> Any:
+    text = engine_info.fetch(port, path)
+    try:
+        return json.loads(text) if text else None
+    except ValueError:
+        return None
+
+
+def context_window(server: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Optional[str]]:
+    """The window one request gets, and why it is unknown. llama-server: a slot's n_ctx (/slots, else /props; with
+    --parallel N and no unified KV cache a slot gets 1/N of -c); vLLM and SGLang: max_model_len (/v1/models)."""
+    if not server or not server.get("port"):
+        return None, "no model server found"
+    port, kind = server["port"], server.get("kind")
+    if kind == "llama-server":
+        slots = _json(port, "/slots")
+        if isinstance(slots, list) and slots and isinstance(slots[0], dict) and slots[0].get("n_ctx"):
+            return int(slots[0]["n_ctx"]), None
+        props = _json(port, "/props")
+        n = ((props or {}).get("default_generation_settings") or {}).get("n_ctx") if isinstance(props, dict) else None
+        return (int(n), None) if n else (None, "llama-server answered neither /slots nor /props with n_ctx")
+    if kind in ("vllm", "sglang"):
+        models = _json(port, "/v1/models")
+        data = models.get("data") if isinstance(models, dict) else None
+        n = data[0].get("max_model_len") if isinstance(data, list) and data and isinstance(data[0], dict) else None
+        return (int(n), None) if n else (None, f"{kind} /v1/models has no max_model_len")
+    return None, f"{kind}: its context window isn't read"
+
+
+class SlotWatcher:
+    """Polls llama-server's /slots while the agent works: the largest prompt any request sent. A slot shows its
+    request's n_prompt_tokens while it runs and keeps it until the slot's next request, so a 1 s poll misses a
+    request only if its slot is reused within the second. What the slots held before the task isn't counted."""
+
+    def __init__(self, port: int, interval_s: float = INTERVAL_S):
+        self.port, self.interval_s = port, interval_s
+        self.before: Dict[Any, Any] = {}
+        self.seen: Dict[Tuple[Any, Any], int] = {}  # (slot, task) -> prompt tokens
+        self.error: Optional[str] = None
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def slots(self) -> Optional[List[Dict[str, Any]]]:
+        s = _json(self.port, "/slots")
+        return [x for x in s if isinstance(x, dict)] if isinstance(s, list) else None
+
+    def start(self) -> "SlotWatcher":
+        first = self.slots()
+        if first is None:
+            self.error = "llama-server doesn't answer /slots (started with --no-slots?)"
+            return self
+        self.before = {x.get("id"): x.get("id_task") for x in first}
+        self._thread = threading.Thread(target=self._loop, name="telemetry-slots", daemon=True)
+        self._thread.start()
+        return self
+
+    def poll(self) -> None:
+        for x in self.slots() or []:
+            n = x.get("n_prompt_tokens")
+            if not isinstance(n, int) or n <= 0 or x.get("id_task") == self.before.get(x.get("id")):
+                continue
+            key = (x.get("id"), x.get("id_task"))
+            self.seen[key] = max(n, self.seen.get(key, 0))
+
+    def _loop(self) -> None:
+        try:
+            while not self._stop.wait(self.interval_s):
+                self.poll()
+        except Exception as e:  # noqa: BLE001
+            self.error = f"/slots polling failed: {type(e).__name__}: {e}"
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=10)
+            self.poll()  # the last request, which may have ended since the last tick
+
+
+def context_block(server: Optional[Dict[str, Any]], window: Optional[int], window_reason: Optional[str],
+                  watcher: Optional[SlotWatcher]) -> Dict[str, Any]:
+    peak = max(watcher.seen.values()) if watcher and watcher.seen else None
+    reasons = [r for r in (window_reason, watcher.error if watcher else None) if r]
+    if server and server.get("kind") in ("vllm", "sglang"):
+        reasons.append(f"{server['kind']} doesn't report each request's prompt size")
+    return {"window": window, "peak_prompt_tokens": peak, "requests": len(watcher.seen) if watcher else None,
+            "reason": "; ".join(reasons) or None}
+
+
 # ---------------------------------------------------------------- one task
 
 class Telemetry:
@@ -836,6 +929,9 @@ class Telemetry:
         self.started = 0.0
         self.wall_start = 0.0
         self.block: Optional[Dict[str, Any]] = None
+        self.window: Optional[int] = None
+        self.window_reason: Optional[str] = None
+        self.slots: Optional[SlotWatcher] = None
 
     def start(self) -> "Telemetry":
         self.started, self.wall_start = time.monotonic(), time.time()
@@ -843,6 +939,12 @@ class Telemetry:
             self.server, self.before, self.server_reason = find_server()
         except Exception as e:  # noqa: BLE001
             self.server_reason = f"the server could not be read: {type(e).__name__}: {e}"
+        try:
+            self.window, self.window_reason = context_window(self.server)
+            if self.server and self.server.get("kind") == "llama-server" and self.server.get("port"):
+                self.slots = SlotWatcher(self.server["port"], self.interval_s).start()
+        except Exception as e:  # noqa: BLE001
+            self.window_reason = f"the context window could not be read: {type(e).__name__}: {e}"
         try:
             self.sampler, self.gpu_reason = pick_sampler((self.server or {}).get("pid"), self.interval_s)
             if self.sampler:
@@ -861,6 +963,17 @@ class Telemetry:
         except Exception as e:  # noqa: BLE001
             self.gpu_reason = f"GPU sampling did not stop cleanly: {type(e).__name__}: {e}"
         try:
+            if self.slots:
+                self.slots.stop()
+            if self.server is None:  # a server that loads its model on the first request (Lemonade) starts later
+                late, _, _ = find_server()
+                if late:
+                    self.window, self.window_reason = context_window(late)
+            context = context_block(self.server, self.window, self.window_reason, self.slots)
+        except Exception as e:  # noqa: BLE001
+            context = context_block(None, self.window, f"/slots polling did not stop cleanly: {type(e).__name__}: {e}",
+                                    None)
+        try:
             after = read_counters(self.server["port"], self.server["kind"]) \
                 if self.server and self.before is not None else None
             server = server_block(self.server, self.before, after, self.server_reason)
@@ -876,7 +989,7 @@ class Telemetry:
         except Exception as e:  # noqa: BLE001
             faults = fault_block([], None, f"not measured: the log could not be read: {type(e).__name__}: {e}")
         self.block = {"interval_s": self.interval_s, "seconds": seconds, "server": server, "gpu": gpu,
-                      "faults": faults}
+                      "faults": faults, "context": context}
         return self.block
 
 
