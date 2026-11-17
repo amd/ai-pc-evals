@@ -117,6 +117,10 @@
    "web",
    "connectors",
    "multimodal"
+  ],
+  "legs": [
+   "cloud",
+   "local"
   ]
  },
  "gaia-app": {
