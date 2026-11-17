@@ -212,7 +212,7 @@ Words you'll meet in the docs and the command output:
 
 ## Contributing
 
-Contributions are welcome: bug reports, fixes, new agent adapters and new task proposals. Start with [CONTRIBUTING.md](CONTRIBUTING.md). Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security vulnerability, see [SECURITY.md](SECURITY.md); please don't open a public issue for it.
+Issues are welcome: bug reports, task ideas and agent adapter requests. Pull requests from outside contributors aren't accepted; [CONTRIBUTING.md](CONTRIBUTING.md) explains why and how to help. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security vulnerability, see [SECURITY.md](SECURITY.md); please don't open a public issue for it.
 
 ## License
 
