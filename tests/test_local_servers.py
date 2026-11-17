@@ -27,6 +27,25 @@ def test_a_server_is_parsed_from_its_command_line():
     assert local_servers.describe(15, "notepad.exe", ["notepad"]) is None
 
 
+def test_an_embedding_llama_server_is_marked():
+    # As Lemonade starts one for an embedding model (GAIA's document index), and a chat one for comparison.
+    s = local_servers.describe(30, "llama-server.exe", ["llama-server.exe", "-m", "nomic-embed.gguf", "--port", "8002",
+                                                        "--embeddings", "--ctx-size", "8192"])
+    assert s["embeddings"] is True and s["port"] == 8002
+    assert local_servers.describe(31, "llama-server", ["llama-server", "--embedding"])["embeddings"] is True
+    assert "embeddings" not in local_servers.describe(32, "llama-server", ["llama-server", "-m", "chat.gguf"])
+
+
+def test_gaias_own_lemonade_and_the_installers_are_listed():
+    # GAIA 0.25 runs Lemonade's embeddable lemond on a private port; the Windows installer runs LemonadeServer.exe.
+    s = local_servers.describe(20, "lemond.exe", ["C:/Users/me/.gaia/lemonade/dist/2026.44.1/lemond.exe",
+                                                  "C:/Users/me/.gaia/lemonade/cache", "C:/Users/me/.gaia/lemonade/config",
+                                                  "--port", "58791"])
+    assert (s["kind"], s["port"], s["model"]) == ("lemonade", 58791, None)
+    s = local_servers.describe(21, "LemonadeServer.exe", ["C:/lemonade_server/bin/LemonadeServer.exe", "--silent"])
+    assert (s["kind"], s["port"]) == ("lemonade", 13305)  # Lemonade's default since 10.1
+
+
 # Process names and command lines as psutil sees the serving skill's containers from the host (vLLM 0.29.0 in
 # rocm/vllm and vllm/vllm-openai, SGLang 0.5.23 in lmsysorg/sglang). The GPU workers rename themselves.
 VLLM_SERVE = ["/usr/bin/python3", "/usr/local/bin/vllm", "serve", "Qwen/Qwen3-0.6B", "--served-model-name",
@@ -83,7 +102,7 @@ def test_listing_uses_psutil_and_reads_only_candidates_command_lines(monkeypatch
         Proc(3, "lemonade-server.exe", ["lemonade-server", "serve"])])
     monkeypatch.setitem(sys.modules, "psutil", fake)
     found = local_servers.list_servers()
-    assert [(s["pid"], s["kind"], s["port"]) for s in found] == [(2, "llama-server", 9000), (3, "lemonade", 8000)]
+    assert [(s["pid"], s["kind"], s["port"]) for s in found] == [(2, "llama-server", 9000), (3, "lemonade", 13305)]
     assert read == ["llama-server.exe", "lemonade-server.exe"]
 
 

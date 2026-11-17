@@ -1,7 +1,7 @@
 # Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
 # SPDX-License-Identifier: MIT
 """tools/check_agent_flags.py (#61): every flag an agents.json entry passes must be an option its CLI lists. The
-help excerpts below are in each CLI's real format (OpenCode 2.2.7, argparse as Hermes 0.23.0, Pi 1.5.2)."""
+help excerpts below are in each CLI's real format (OpenCode 2.2.7, argparse as Hermes 0.23.0, Pi 1.5.2, GAIA 0.25.4)."""
 import json
 
 import pytest
@@ -25,6 +25,13 @@ HERMES_CHAT = """options:
                         command line (- for stdin); see also -Q/--quiet.
   -m, --model MODEL     Model to use (e.g., anthropic/claude-sonnet-4)
 """
+GAIA = """options:
+  --base-url BASE_URL   Remote Lemonade server base URL (e.g. https://host:13305/api/v1). Used with --ui and -p.
+  -p, --print [PROMPT]  Run the GAIA agent once on PROMPT, print the answer and exit (reads the prompt from stdin when PROMPT is omitted)
+  --model PRINT_MODEL   Model id for -p (default: config default_model, else the agent's)
+  --dangerously-skip-permissions
+                        With -p: run confirmation-gated tools (file writes, shell) without asking. Without it they are denied, since nobody is there to approve
+"""
 PI = """Options:
   --model <pattern>              Model pattern or ID
   --no-skills, -ns               Disable skills discovery and loading
@@ -43,6 +50,7 @@ def test_the_command_is_the_cli_and_its_subcommands_and_the_flags_are_named_once
     (OPENCODE_RUN, {"--model", "-m", "--continue", "-c", "--print-logs"}, {"--standalone"}),  # prose isn't a listing
     (HERMES_CHAT, {"-Q", "--quiet", "--query-file", "-m", "--model"}, set()),
     (PI, {"--model", "--no-skills", "-ns"}, set()),
+    (GAIA, {"-p", "--print", "--model", "--base-url", "--dangerously-skip-permissions"}, set()),
     ("\x1b[1m  --model\x1b[0m, -m   Model\n", {"--model", "-m"}, set()),  # colour codes
 ])
 def test_only_options_in_a_help_lines_left_column_count(text, listed, not_listed):
@@ -67,6 +75,14 @@ def test_44s_opencode_entry_fails_and_the_current_one_passes(monkeypatch):
     (row,) = caf.check(old, require_all=True)
     assert row["failed"] and row["missing"] == ["--dir", "--pure"]
     (row,) = caf.check(new, require_all=True)
+    assert not row["failed"] and row["missing"] == []
+
+
+def test_the_gaia_entry_passes_against_gaias_top_level_help(monkeypatch):
+    """gaia -p's flags are top-level options (GAIA 0.25.4's argparse help), not a subcommand's."""
+    fake_clis(monkeypatch, {("gaia",): GAIA})
+    agents = json.loads(caf.AGENTS.read_text(encoding="utf-8"))
+    (row,) = caf.check({"gaia": agents["gaia"]}, require_all=True)
     assert not row["failed"] and row["missing"] == []
 
 
