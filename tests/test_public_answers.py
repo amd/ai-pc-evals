@@ -490,11 +490,11 @@ def test_a_suite_sync_writes_the_public_answers_and_refreshes_them(tmp_path, mon
         for t in data["tasks"]:
             if t["id"] == "kw-91-ledger":
                 t["max_minutes"] = 45
-                t["probe"] = ["import csv", "assert True"]  # the probe file, copied line for line
+                t["probe"] = ["import csv", "assert True"]  # a probe edited in the full task file
         return data
 
     def run(*argv):
-        return suite_sync.sync_main("demo", render, dict, list(argv), lambda d: 1)
+        return suite_sync.sync_main("demo", render, list(argv), lambda d: 1)
 
     assert run("--check") == 1  # out of date with the (pretend) suite files
     assert run() == 0
