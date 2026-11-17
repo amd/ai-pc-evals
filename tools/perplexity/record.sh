@@ -25,7 +25,9 @@ run_info_args
 Q=${KW_QUEUE_SECONDS:-0}; Q=${Q%.*}; W=$(( W > Q ? W - Q : 0 ))
 # Same harness names as rec_thread.sh: cloud and lemonade are their own, every other leg is local.
 case $L in perplexity-cloud|perplexity-lemonade) H=$L;; *) H=perplexity-local;; esac
-kw record "$(winpath "$R")" "$T" \
+# Past the task's max_minutes the engine records it as timed out (a fail), as a CLI agent is stopped at its cap.
+OUT=$(kw record "$(winpath "$R")" "$T" \
   --answer-file "$(winpath "$A")" --wall-seconds "$W" --credits "$C" --harness "$H" --model "$M" \
-  --notes "app: Finished $APP" "${RUN_INFO[@]}" --force >/dev/null
+  --notes "app: Finished $APP" "${RUN_INFO[@]}" --force)
+grep -F -e "[TIMED OUT]" -e "[NOTE]" <<<"$OUT" || true
 echo "recorded $T: deliverables at +${W}s, app $APP, $C credits, answer $(wc -c < "$A") bytes"
