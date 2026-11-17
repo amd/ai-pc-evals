@@ -1307,6 +1307,10 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         print("\nstopped; the run folder keeps whatever finished", file=sys.stderr)
         return 130
+    except EOFError:  # a manual agent's question met the end of its input (Ctrl-Z, Ctrl-D, a closed pipe)
+        print("\nstopped: the input ended while the runner was asking a question; the run folder keeps whatever "
+              "finished", file=sys.stderr)
+        return 1
     return 0
 
 

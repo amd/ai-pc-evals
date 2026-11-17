@@ -310,6 +310,20 @@ def test_time_box(env):
     assert not strict.ok and "INCOMPLETE" in strict.render()
 
 
+def test_the_time_box_is_checked_between_files_not_only_between_folders(tmp_path, monkeypatch):
+    # One folder of big archives took minutes past a 300 s limit when the clock was read per folder only.
+    for name in ("a.txt", "b.txt", "c.txt"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    now = [0.0]
+    monkeypatch.setattr(preflight.time, "monotonic", lambda: now[0])
+    walked = []
+    with pytest.raises(TimeoutError):
+        for path in preflight.walk_files([tmp_path], [], 5.0, set()):
+            walked.append(path.name)
+            now[0] = 10.0  # the first file took past the deadline
+    assert walked == ["a.txt"]
+
+
 def test_readable_check(env):
     readable = env["home"] / "Documents"
     assert preflight.readable_check([readable, env["tmp"] / "missing"]) == [str(readable)]
