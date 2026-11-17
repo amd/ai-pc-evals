@@ -36,8 +36,8 @@ share modified copies of files whose licence forbids changes.
 | A Perplexity blog post (perplexity.ai), saved by hand | pc-01 | © Perplexity AI, Inc. Saved for local use only, never redistributed |
 | Public Reddit threads, which pc-07's request points the agent to | pc-07 | Nothing is downloaded or stored by this repository; the agent reads them itself, under [Reddit's terms](https://redditinc.com/policies/user-agreement) |
 
-The source note for each task (`knowledgework/sources/<task>.md`) lists every URL it uses and the terms
-that apply.
+`SOURCES` in `knowledgework/build_fixtures.py` lists every URL a knowledge-work task uses and the terms
+that apply; `knowledgework/portable/packs.json` lists the portable tasks' saved pages.
 
 ## Files stored in this repository
 
