@@ -1,7 +1,8 @@
 name: agent CLIs
 
-# The flags tools/agents/agents.json passes to the third-party agent CLIs (OpenCode, Pi, OpenClaw, Hermes), checked
-# against each CLI's latest release (#61): those CLIs change quickly, and a flag one drops fails every task.
+# The flags tools/agents/agents.json passes to the third-party agent CLIs (OpenCode, Pi, OpenClaw, Hermes, GAIA), checked
+# against each CLI's latest release (GAIA: the pinned one below) (#61): those CLIs change quickly, and a flag one drops
+# fails every task.
 # Not a required check: a new release shouldn't block unrelated pull requests. The weekly run opens (or comments
 # on) one issue instead, and closes it once the entries match again.
 on:
@@ -42,6 +43,11 @@ jobs:
           npm install -g --ignore-scripts @earendil-works/pi-coding-agent || echo "::warning::Pi did not install"
           npm install -g openclaw || echo "::warning::OpenClaw did not install"
           curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash || echo "::warning::Hermes did not install"
+          # GAIA: pinned to the release the gaia entry is written for (its `about`), not the latest, since the entry
+          # also depends on GAIA's state variables and `gaia daemon stop`, which --help doesn't show. The CLI alone:
+          # `gaia --help` lists the -p flags, without the agent package or Lemonade. In its own pipx environment,
+          # with a time limit, so a slow or failed install leaves the other CLIs and their checks as they are.
+          timeout 600 pipx install "amd-gaia==0.25.4" || echo "::warning::GAIA did not install"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Check every entry's flags against its CLI's --help
         id: check
