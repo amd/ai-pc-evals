@@ -1,6 +1,7 @@
 # Copyright(C) 2026 Advanced Micro Devices, Inc. All rights reserved.
 # SPDX-License-Identifier: MIT
 import hashlib
+import json
 
 import pytest
 
@@ -224,3 +225,54 @@ def test_a_failed_download_skips_only_that_task(tmp_path, three_builders, monkey
     monkeypatch.setitem(bf.BUILDERS, "t-b", lambda root: three_builders.append("t-b"))
     assert bf.main(["--fixtures-root", str(tmp_path), "--only", "t-a", "t-b", "t-c"]) == 1
     assert three_builders == ["t-b", "t-c"]
+
+
+# ---- --candidate-pins (tools/check_sources.py: what a changed source does to the keys) -------------------------------
+
+@pytest.fixture
+def candidate_task(tmp_path, cache, monkeypatch):
+    """One task whose one source changed upstream: (its key folder, the new bytes)."""
+    new = b"the new upstream bytes"
+    monkeypatch.setattr(bf, "PINS", {SRC.url: sha(b"original")})
+    monkeypatch.setattr(bf, "SOURCES", {"t-a": [SRC]})
+    monkeypatch.setattr(bf, "_download", lambda url, dest: dest.write_bytes(new))
+    keys_dir = tmp_path / "throwaway-keys"
+    monkeypatch.setenv("KW_KEYS", str(keys_dir))
+    monkeypatch.setattr(bf, "KEYS_DIR", keys_dir)
+
+    def build(root):
+        bf.write_key(root, "t-a", {"rows": bf.fetch(SRC).read_bytes().decode()})
+    monkeypatch.setattr(bf, "BUILDERS", {"t-a": build})
+    monkeypatch.setattr(bf, "require_harness", lambda: None)
+    return keys_dir, new
+
+
+def test_candidate_pins_build_from_the_new_bytes(tmp_path, candidate_task):
+    keys_dir, new = candidate_task
+    with pytest.raises(bf.PinMismatchError):  # the pinned build refuses the new bytes
+        bf.main(["--fixtures-root", str(tmp_path / "fx"), "--only", "t-a"])
+    pins = tmp_path / "candidates.json"
+    pins.write_text(json.dumps({SRC.url: sha(new)}), encoding="utf-8")
+    assert bf.main(["--fixtures-root", str(tmp_path / "fx"), "--only", "t-a", "--candidate-pins", str(pins)]) == 0
+    assert json.loads((keys_dir / "t-a.json").read_text(encoding="utf-8")) == {"rows": new.decode()}
+
+
+def test_candidate_pins_only_re_pin_urls_pins_has(tmp_path, candidate_task):
+    pins = tmp_path / "candidates.json"
+    pins.write_text(json.dumps({"https://elsewhere.invalid/x": "a" * 64}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="not in PINS"):
+        bf.main(["--fixtures-root", str(tmp_path / "fx"), "--only", "t-a", "--candidate-pins", str(pins)])
+    pins.write_text(json.dumps({SRC.url: "not a hash"}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="SHA-256"):
+        bf.main(["--fixtures-root", str(tmp_path / "fx"), "--only", "t-a", "--candidate-pins", str(pins)])
+
+
+def test_candidate_pins_need_throwaway_keys_and_fixtures(tmp_path, candidate_task, monkeypatch):
+    pins = tmp_path / "candidates.json"
+    pins.write_text("{}", encoding="utf-8")
+    monkeypatch.delenv("KW_KEYS")
+    with pytest.raises(SystemExit):
+        bf.main(["--fixtures-root", str(tmp_path / "fx"), "--only", "t-a", "--candidate-pins", str(pins)])
+    monkeypatch.setenv("KW_KEYS", str(tmp_path / "k"))
+    with pytest.raises(SystemExit):  # the default fixtures root: what it builds is not the test
+        bf.main(["--only", "t-a", "--candidate-pins", str(pins)])
