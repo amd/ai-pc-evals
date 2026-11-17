@@ -366,6 +366,18 @@ def test_every_answer_temp_prefix_is_flagged_with_its_fix_and_no_other(env):
         assert f.fix == f'rm -rf "{Path(f.path).as_posix()}"' and f.reason
 
 
+def test_the_temp_folder_this_package_runs_from_is_not_flagged(env):
+    """tools/smoke.py unzips the release into a kw-smoke- folder and runs preflight from there: that folder is this
+    run's own, not a leftover, while another kw-smoke- folder beside it still fails."""
+    temp = env["tmp"] / "temp"
+    own, other = temp / "kw-smoke-own", temp / "kw-smoke-old"
+    package = own / "install" / "ai-pc-evals-0.0.0"
+    package.mkdir(parents=True)
+    other.mkdir()
+    found = preflight.check_known(env["home"], package, None, {}, env["home"] / "kw-eval", temp)
+    assert {Path(f.path) for f in found} == {other}
+
+
 #: Temp folders made without a prefix, and why none can hold answer material.
 UNPREFIXED_TEMP_OK = {
     "knowledgework/developer/probes/dev-b3-issue-to-fix.py": "a copy of the agent's own repo, to run its tests",
