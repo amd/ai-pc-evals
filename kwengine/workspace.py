@@ -36,12 +36,14 @@ from ._support import Scrubber, revision
 from .plants import PLANTS
 from .schema import (
     FIXTURES_DIR,
+    KW_DIR,
     TASKS_FILE,
     KwTask,
     fill_dates,
     load_suite,
     load_tasks,
 )
+from .tls import TLS_HINT, is_cert_error, ssl_context, use_os_trust_store
 
 RUN_FILE = "kw-run.json"
 BASELINE_DIR = ".baseline"
@@ -77,6 +79,7 @@ class InputIntegrityError(ValueError):
 FIXTURES_ENV = "KW_FIXTURES"
 KEYS_ENV = "KW_KEYS"
 BUILD_FIXTURES = "knowledgework/build_fixtures.py"
+MIRROR_ENV = "KW_MIRROR"
 
 
 def eval_home() -> Path:
@@ -112,14 +115,60 @@ def sha256_file(path: Path) -> str:
 
 
 def _download(url: str, dest: Path) -> None:
+    use_os_trust_store()  # a TLS-inspecting corporate proxy's root is in the OS store, not Python's list
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_S) as resp:
+    context = ssl_context()  # REQUESTS_CA_BUNDLE, which urllib doesn't read by itself
+    extra = {"context": context} if context else {}
+    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_S, **extra) as resp:
         with open(dest, "wb") as out:
             shutil.copyfileobj(resp, out)
 
 
+def mirror_dir() -> Optional[Path]:
+    """The team's mirror of pinned originals ($KW_MIRROR, laid out <sha256>/<name>), or None."""
+    env = os.environ.get(MIRROR_ENV)
+    return Path(env).expanduser() if env else None
+
+
+def _from_mirror(sha256: str, name: str, cached: Path) -> bool:
+    """Copy a verified mirror copy of the pinned file to *cached*; False if the mirror has none."""
+    mirror = mirror_dir()
+    copy = mirror / sha256 / name if mirror else None
+    if not copy or not copy.is_file() or sha256_file(copy) != sha256:
+        return False
+    partial = cached.with_name(cached.name + ".part")
+    shutil.copyfile(copy, partial)
+    if sha256_file(partial) != sha256:  # changed while copied
+        partial.unlink()
+        return False
+    partial.replace(cached)
+    return True
+
+
+def build_pin(url: str) -> Optional[str]:
+    """The SHA-256 ``PINS`` in knowledgework/build_fixtures.py gives *url*, or None (not there, or no such file)."""
+    try:
+        text = (KW_DIR / "build_fixtures.py").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    block = text[text.find("# BEGIN PINS"):text.find("# END PINS")]
+    found = re.search(re.escape(json.dumps(url)) + r':\s*"([0-9a-f]{64})"', block)
+    return found.group(1) if found else None
+
+
+def _mirror_hint(sha256: str, name: str, cached: Path) -> str:
+    """How a mirror could supply the pinned file: set one, or what the one that is set lacks."""
+    mirror = mirror_dir()
+    by_hand = f"or copy the original (SHA-256 {sha256}) to {cached} by hand"
+    if not mirror:
+        return (f"Set {MIRROR_ENV} to the team's mirror of pinned files and prepare again "
+                f"(docs/TASKS.md, 'Setting up a team mirror'), {by_hand}.")
+    return (f"{MIRROR_ENV} is set, but {mirror / sha256 / name} is missing or has other bytes: add the pinned "
+            f"original there (`python {BUILD_FIXTURES} --export-mirror <dir>` on a PC that has it), {by_hand}.")
+
+
 def fetch(url: str, sha256: str, name: str, cache_dir: Path) -> Path:
-    """The file at *url*, from the cache or downloaded, verified against *sha256*."""
+    """The file at *url*, verified against *sha256*: from the cache, else the mirror ($KW_MIRROR), else downloaded."""
     cached = cache_dir / sha256 / name
     if cached.is_file():
         actual = sha256_file(cached)
@@ -130,24 +179,34 @@ def fetch(url: str, sha256: str, name: str, cache_dir: Path) -> Path:
             )
         return cached
     cached.parent.mkdir(parents=True, exist_ok=True)
+    if _from_mirror(sha256, name, cached):
+        return cached
     partial = cached.with_name(cached.name + ".part")
     try:
         _download(url, partial)
     except OSError as exc:
         partial.unlink(missing_ok=True)
         raise InputIntegrityError(
-            f"Could not download {url}: {exc}. Check the network, or place the "
-            f"file at {cached} by hand (its SHA-256 must be {sha256})."
+            f"Could not download {url}: {exc}. "
+            + (TLS_HINT + " " if is_cert_error(exc) else "Check the network. ")
+            + _mirror_hint(sha256, name, cached)
         ) from exc
     actual = sha256_file(partial)
     if actual != sha256:
         partial.unlink()
+        pinned = build_pin(url)
+        if pinned and pinned != sha256:
+            # The answer key is built from the PINS bytes; a mirror holds those, not what this task file asks for.
+            raise InputIntegrityError(
+                f"{url} downloaded with SHA-256 {actual}, but the task pins {sha256}, and PINS in {BUILD_FIXTURES} "
+                f"pins {pinned}: the task file disagrees with PINS (issue #37), so a mirror can't help. The task "
+                "can't run until its task file is corrected (a newer release fixes it; maintainers: python "
+                "knowledgework/sync_input_pins.py --check)."
+            )
         raise InputIntegrityError(
-            f"{url} downloaded with SHA-256 {actual}, but the task pins {sha256}. "
-            "Either the document changed upstream (set KW_MIRROR to a mirror of the pinned files and build again "
-            "with knowledgework/build_fixtures.py, see docs/TASKS.md), or the task file's sha256 disagrees with "
-            "PINS in knowledgework/build_fixtures.py (a newer release fixes that; maintainers: python "
-            "knowledgework/sync_input_pins.py --check)."
+            f"{url} downloaded with SHA-256 {actual}, but the task pins {sha256}: the document changed upstream. "
+            + _mirror_hint(sha256, name, cached)
+            + " See docs/TASKS.md, 'Pinned inputs that changed upstream'."
         )
     partial.replace(cached)
     return cached
