@@ -60,8 +60,9 @@ Thumbs.db
 !tests/regression/*.xlsx
 !tests/regression/*.docx
 
-# Claude Code session state and agent worktrees
-.claude/
+# Claude Code session state and agent worktrees; the operators' skill (.claude/skills/) is committed and ships.
+.claude/*
+!.claude/skills/
 
 # The assistant suite's documents are committed task inputs, whatever their type.
 !knowledgework/assistant/corpus/**

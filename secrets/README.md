@@ -159,6 +159,15 @@ python -m keyring set ai-pc-evals answers-passphrase     # paste at the hidden p
 python tools/keys.py check --deep                         # prints "decrypted OK"
 ```
 
+If `check --deep` says the passphrase is wrong, compare the two PCs without showing it:
+
+```bash
+python tools/keys.py fingerprint              # e.g. "answers-passphrase: 43 characters, fingerprint 61c9a0f6 (from the credential store, ...)"
+python tools/keys.py fingerprint --heldout    # the same for heldout-passphrase
+```
+
+Run it on both PCs, from an up-to-date checkout or release folder. The same length and fingerprint mean the same passphrase. It prints only the length and the first 8 hex characters of the passphrase's SHA-256, which say nothing usable about a high-entropy passphrase, and where it came from. `KW_ANSWERS_PASSPHRASE` (or `KW_HELDOUT_PASSPHRASE`) wins over the credential store, so a stale value there shows up here. A difference usually means a character was lost in the paste: set it again (right-click pastes at the hidden prompt in cmd and PowerShell). Once the answers are published, only `--heldout` matters (with none stored, plain `fingerprint` then says no answers passphrase is needed).
+
 Move the held-out passphrase through your password manager the same way, into `heldout-passphrase`. Never paste a passphrase into a chat, an issue, a document or an AI agent, and never ask an agent to move it for you. If Windows clipboard history (Win+V) is on, delete the entry there too. `copy-passphrase` clears the clipboard when the time is up even if you copied something else meanwhile.
 
 ### Rotating the passphrase
