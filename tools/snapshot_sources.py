@@ -42,6 +42,10 @@ from pathlib import Path
 from render import find_chrome
 
 REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(1, str(REPO))  # kwengine
+from kwengine.tls import TLS_HINT, is_cert_error, ssl_context, use_os_trust_store  # noqa: E402
+
 PACKS = REPO / "knowledgework" / "portable" / "packs.json"
 #: The committed lock. KW_SNAPSHOT_LOCK points at another one for development packs (stand-ins for
 #: pages not saved yet); every result then says DEV SNAPSHOTS and is not comparable.
@@ -89,9 +93,16 @@ def pack_sources(pack: str, packs_file: Path = PACKS) -> list[dict]:
 
 
 def http_get(url: str) -> bytes:
+    use_os_trust_store()  # a TLS-inspecting corporate proxy's root is in the OS store, not Python's list
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
-        return r.read()
+    context = ssl_context()  # REQUESTS_CA_BUNDLE, which urllib doesn't read by itself
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_S, **({"context": context} if context else {})) as r:
+            return r.read()
+    except OSError as e:
+        if is_cert_error(e):
+            raise SnapshotError(f"{e}. {TLS_HINT}") from e
+        raise
 
 
 def chrome(*args: str) -> subprocess.CompletedProcess:
