@@ -48,6 +48,8 @@ def test_unpacked_package_reports_its_own_version(tmp_path, monkeypatch):
     assert v["commit"] == "c0ffee" and v["dirty"] is False
     assert v["framework"] == (package.REPO / "VERSION").read_text().strip()
     assert v["tasks"] == evalversion.tasks_fingerprint(package.REPO)
+    # The libraries that decide what the judge reads are named in every eval-version record.
+    assert set(v["libraries"]) == {"pypdf", "pypdfium2", "openpyxl", "python-docx", "python-pptx"}
 
 
 def test_the_public_answers_are_shipped_and_maintainer_notes_are_not():
