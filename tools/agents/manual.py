@@ -7,7 +7,8 @@
 
 With "legs", --model must name one of them: it is the run's leg (a prompt's {route} is filled from it), and the
 model picker the tester reports is checked against it (a cloud leg whose picker says local, or the reverse, is
-flagged and asked about, and recorded as picker_mismatch when kept).
+flagged and asked about, and recorded as picker_mismatch when kept). "picker" and "picker_examples" say what to
+read off that app's own picker, and give examples of what it shows.
 
 For each task the runner asks for the app's version (once) and what its model picker shows (a new
 session starts on the last model used, so it is confirmed every task), tells you to wait for any
@@ -150,6 +151,12 @@ def engine_build() -> str:
         return ""
 
 
+#: Asked when agents.json gives an app no "picker" / "picker_examples" of its own.
+DEFAULT_PICKER = ("Check the model picker in a fresh session and type what it shows, comma-separated: model or mode, "
+                  "reasoning, speed")
+DEFAULT_PICKER_EXAMPLES = "e.g. the model's name as the picker shows it"
+
+
 class ManualAgent(Agent):
     manual = True
 
@@ -162,6 +169,16 @@ class ManualAgent(Agent):
         self.ask, self.clock = ask, clock
         self.app_version: Optional[str] = None  # asked once per run
         self.last_picker = ""  # a new session starts on the last model used: confirmed per task, not assumed
+
+    @property
+    def picker_question(self) -> str:
+        """What to read off the app's model picker (agents.json "picker"), asked every task."""
+        return self.spec.get("picker") or DEFAULT_PICKER
+
+    @property
+    def picker_examples(self) -> str:
+        """Examples of what this app's picker shows (agents.json "picker_examples"), never another app's."""
+        return self.spec.get("picker_examples") or DEFAULT_PICKER_EXAMPLES
 
     @property
     def legs(self) -> List[str]:
@@ -209,8 +226,7 @@ class ManualAgent(Agent):
         print("Before you send: wait until any earlier session in the app has finished (a local model runs one "
               "job at a time, and a queued task's timer includes the wait).")
         keep = f"; Enter keeps '{self.last_picker}'" if self.last_picker else ""
-        shown_picker = self.ask("Check the model picker in a fresh session and type what it shows: mode, reasoning, "
-                                f"speed (e.g. 'standard', 'custom: Opus 5.5, medium, fast', 'local'{keep}): ").strip()
+        shown_picker = self.ask(f"{self.picker_question} ({self.picker_examples}{keep}): ").strip()
         self.last_picker, mismatch = self._confirm_picker(shown_picker or self.last_picker)
         info: Dict[str, Any] = {"app_version": self.app_version, **picker(self.last_picker)}
         flags: Dict[str, Any] = {"picker_mismatch": True} if mismatch else {}
