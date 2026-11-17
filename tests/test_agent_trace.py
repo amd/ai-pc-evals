@@ -182,6 +182,12 @@ def test_summary_lines_say_nothing_when_nothing_is_off():
     assert T.health_line("t", h) == "t: 1 malformed tool call, 2 of 9 tool calls failed, loop (read x6)"
 
 
+def test_the_console_shows_calls_and_context_for_every_task():
+    assert T.calls_brief({"calls": 2, "errors": 0}) == "2 (0 failed)" and T.calls_brief({"calls": None}) == ""
+    assert T.context_brief({"peak_prompt_tokens": 3100, "window": 65536}) == "peak 3.1K of 65.5K (5%)"
+    assert T.context_brief({"peak_prompt_tokens": 3100}) == "peak 3.1K" and T.context_brief({}) == ""
+
+
 def test_the_servers_window_and_peak_complete_the_agents_view():
     agent = T.context(T.parse("pi", read("pi-two-reads.jsonl")))
     merged = T.with_server(agent, {"window": 16384, "peak_prompt_tokens": 1800, "requests": 3, "reason": None})
@@ -358,7 +364,8 @@ def test_a_run_records_both_blocks_and_merges_the_servers_context(tmp_path, monk
     result = json.loads((run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8"))
     assert result["context"]["window"] == 16384 and result["context"]["peak_prompt_tokens"] == 56599
     assert result["tool_health"]["source"] == "pi"
-    assert "verify-02: 2 requests over the window" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "\nverify-02 (running, " in out and "  context:    2 requests over the window" in out
 
 
 # ----------------------------------------------------------------- the server side (--telemetry)

@@ -1311,6 +1311,10 @@ def test_the_cli_round_trip_prints_what_the_runners_parse(tmp_path, monkeypatch,
     out = capsys.readouterr().out
     assert f"[JUDGE] {ft.DEFAULT_JUDGE_MODEL}" in out and ft.DEFAULT_JUDGE_MODEL == "claude-opus-5-5"
     assert "1/1 passed" in out and "[SCORECARD]" in out
+    cli.main(["grade", str(run_dir), "--brief"])  # what run_eval.py asks for: it prints its own summary
+    out = capsys.readouterr().out
+    assert out == f"judge:      {ft.DEFAULT_JUDGE_MODEL} via claude-code\njudged:     {SMOKE}\n"
+    assert "[SCORECARD]" not in out and "|---|" not in out
 
 
 def test_the_cli_reports_a_fixable_error_and_exits_2(tmp_path, capsys):

@@ -480,5 +480,18 @@ def context_line(task_id: str, block: Dict[str, Any]) -> str:
     return f"{task_id}: " + ", ".join(bits) if bits else ""
 
 
+def calls_brief(block: Dict[str, Any]) -> str:
+    """The console's tool-call line when nothing is off: "2 (0 failed)", "" when the calls aren't known."""
+    return "" if block.get("calls") is None else f"{block['calls']} ({block.get('errors') or 0} failed)"
+
+
+def context_brief(block: Dict[str, Any]) -> str:
+    """The console's context line when nothing is off: "peak 3.1K of 65.5K (5%)", "" when nothing was measured."""
+    peak, window = block.get("peak_prompt_tokens"), block.get("window")
+    if not peak:
+        return ""
+    return f"peak {_k(peak)}" + (f" of {_k(window)} ({peak / window:.0%})" if window else "")
+
+
 def _k(n: Optional[int]) -> str:
     return "?" if n is None else f"{n / 1000:.1f}K" if n >= 1000 else str(n)

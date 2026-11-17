@@ -1018,6 +1018,31 @@ def line(block: Dict[str, Any]) -> str:
     return "telemetry: " + ", ".join(bits) + (f" ({'; '.join(notes)})" if notes else "")
 
 
+def fields(block: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """The same as line(), as (key, value) pairs for a key: value console block."""
+    s, g, f = block.get("server") or {}, block.get("gpu") or {}, block.get("faults") or {}
+
+    def val(x: Optional[float], fmt: str, unit: str) -> str:
+        return "n/a" if x is None else fmt.format(x) + unit
+
+    out = [("prefill", val(s.get("prefill_tok_s"), "{:.0f}", " tok/s")),
+           ("decode", val(s.get("decode_tok_s"), "{:.1f}", " tok/s")),
+           ("vram peak", val(g.get("vram_peak_gb"), "{:.1f}", " GB"))]
+    if g.get("shared_peak_gb") is not None:
+        out.append(("shared peak", f"{g['shared_peak_gb']:.1f} GB"))
+    out.append(("gpu util", val(g.get("util_mean_pct"), "{:.0f}", "%")))
+    if g.get("power_mean_w") is not None:
+        out.append(("power", f"{g['power_mean_w']:.0f} W"))
+    if f.get("reason"):
+        out.append(("gpu faults", "n/a"))
+    elif any(f.get(k) for k in FAULT_KINDS):
+        out.append(("gpu faults", ", ".join(f"{f[k]} {k.replace('_', ' ')}" for k in FAULT_KINDS if f.get(k))))
+    notes = [r for r in (s.get("reason"), g.get("reason"), f.get("reason")) if r]
+    if notes:
+        out.append(("telemetry", "; ".join(notes)))
+    return out
+
+
 if __name__ == "__main__":
     tel = Telemetry().start()
     time.sleep(float(sys.argv[1]) if len(sys.argv) > 1 else 5)
