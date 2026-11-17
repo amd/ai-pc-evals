@@ -376,6 +376,9 @@ def test_the_temp_folder_this_package_runs_from_is_not_flagged(env):
     other.mkdir()
     found = preflight.check_known(env["home"], package, None, {}, env["home"] / "kw-eval", temp)
     assert {Path(f.path) for f in found} == {other}
+    # The temp folder spelled differently from the package's path (Windows CI: C:\Users\RUNNER~1 vs the long name)
+    found = preflight.check_known(env["home"], package, None, {}, env["home"] / "kw-eval", own / "..")
+    assert {Path(f.path).resolve() for f in found} == {other.resolve()}
 
 
 #: Temp folders made without a prefix, and why none can hold answer material.
