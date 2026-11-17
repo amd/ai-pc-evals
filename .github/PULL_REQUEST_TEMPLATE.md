@@ -1,3 +1,5 @@
+<!-- Pull requests are accepted from this repository's maintainers only; others are closed automatically. Please open an issue instead: see CONTRIBUTING.md. -->
+
 ## What this changes
 
 <!-- One or two sentences: what and why. Link the issue if there is one. -->

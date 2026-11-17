@@ -1,15 +1,18 @@
 # Contributing
 
-Thanks for your interest in AI PC evals. Bug reports, fixes, documentation improvements, new agent adapters and task proposals are all welcome. This page explains how to set up, what checks to run, and the extra care that changes to grading need.
+Thanks for your interest in AI PC evals.
+
+**We welcome issues, not pull requests.** To keep this repository light to maintain, only its maintainers change the code. Pull requests from outside contributors are closed automatically, whatever their quality, so please don't spend time on one. Open an issue instead: bug reports, task ideas, agent adapter requests and documentation problems are all appreciated, and the maintainers act on them. You're also free to fork the project under its MIT license.
 
 By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security vulnerability, follow [SECURITY.md](SECURITY.md) instead of opening an issue.
 
-## Ways to contribute
+## Ways to help
 
 - **Report a bug**: open an issue with the "Bug report" template. Include the command you ran, what you expected, what happened, and the output of `python tools/evalversion.py`.
-- **Propose a task**: open an issue with the "Task proposal" template before writing any code. A new task changes what every result means, so the maintainers agree the idea first. [docs/ADDING_A_TASK.md](docs/ADDING_A_TASK.md) explains how a task is built.
-- **Connect a new agent**: open an issue with the "Agent adapter request" template, or go straight to [docs/ADDING_AN_AGENT.md](docs/ADDING_AN_AGENT.md). Most command-line agents need only a few lines of JSON.
-- **Fix something**: small fixes can go straight to a pull request.
+- **Propose a task**: open an issue with the "Task proposal" template. A new task changes what every result means, so the maintainers decide on and build new tasks. [docs/ADDING_A_TASK.md](docs/ADDING_A_TASK.md) explains how a task is built.
+- **Ask for a new agent**: open an issue with the "Agent adapter request" template. [docs/ADDING_AN_AGENT.md](docs/ADDING_AN_AGENT.md) shows how to connect one in your own copy, often with a few lines of JSON.
+
+The rest of this page is for maintainers, and for anyone working on their own fork.
 
 ## Set up a development copy
 
@@ -21,7 +24,7 @@ cd ai-pc-evals
 python -m pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-You don't need any password to work on the code or run the tests. Once the answers are published (before the next release), the answers of every task here are public, in `answers/`, and adding a task needs no password either (see [docs/ADDING_A_TASK.md](docs/ADDING_A_TASK.md#answer-keys)). Until then they are encrypted in `secrets/answers.enc`, and the tests that need them skip and say why.
+You don't need any password to work on the code or run the tests. The answers are encrypted in `secrets/answers.enc`; the tests that need them skip without the answers passphrase and say why.
 
 ## Before you open a pull request
 
