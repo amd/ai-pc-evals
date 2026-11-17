@@ -317,6 +317,10 @@ def walk_files(roots: Sequence[Path], skip: Sequence[Path], deadline: float, see
         # pyvenv.cfg and its interpreter), and only its package folders: anything else in it is still swept.
         venv = _is_venv(d)
         for entry in _entries(d):
+            # Per entry too, not only per folder: one folder of big archives (diagnostic zips in Downloads) took
+            # minutes past the deadline. Outside the try: TimeoutError is an OSError.
+            if time.monotonic() > deadline:
+                raise TimeoutError
             try:
                 if entry.is_symlink() or (hasattr(entry, "is_junction") and entry.is_junction()):
                     continue

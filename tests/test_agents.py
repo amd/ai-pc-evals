@@ -1350,3 +1350,13 @@ def test_the_summary_lists_the_scores_of_each_task_below_5(tmp_path, monkeypatch
     assert ("- as-data-top-product: compliance 5 · work quality 4 · accuracy 4 · completeness 5 · fabrication-free 4 "
             "(One axis-level slip in its own commentary.)") in text
     assert "- as-rq-meeting-action-items:" not in text
+
+
+def test_input_ending_at_a_manual_agents_question_stops_with_a_line_not_a_traceback(monkeypatch, capsys):
+    """Ctrl-Z (Ctrl-D) or a closed pipe at one of the runner's questions to the person used to end in a traceback."""
+    def asks(*_a, **_k):
+        raise EOFError("EOF when reading a line")
+    monkeypatch.setattr(run_eval, "run", asks)
+    assert run_eval.main(["--agent", "perplexity-computer", "--model", "cloud", "--suite", "verify"]) == 1
+    err = capsys.readouterr().err
+    assert "the input ended" in err and "Traceback" not in err

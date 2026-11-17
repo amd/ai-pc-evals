@@ -14,7 +14,20 @@ for sub in ("tools", "tools/perplexity", "knowledgework"):
         sys.path.insert(0, path)
 
 
+import tempfile  # noqa: E402
+
 import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _private_temp_dir(tmp_path_factory):
+    """Grading makes its probe folders (kw-probe-*) in the system temp folder. A test run that is killed, or a
+    probe folder Windows can't delete yet, would leave one there, and the preflight of every later real run on
+    this PC then fails on it. Tests make theirs in pytest's own temp folder instead."""
+    old = tempfile.tempdir
+    tempfile.tempdir = str(tmp_path_factory.mktemp("systemp"))
+    yield
+    tempfile.tempdir = old
 
 
 @pytest.fixture(autouse=True)
