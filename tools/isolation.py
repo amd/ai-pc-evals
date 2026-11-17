@@ -444,16 +444,22 @@ def _windows_python_paths(python: Path) -> List[Tuple[Path, frozenset]]:
 
 
 #: Linux, run as the agent user: whether it can run the probes' Python ($1), then every path it could change that
-#: this Python runs from: the interpreter, its link target and every folder above either (one it may write in, or
-#: owns, lets it replace what is inside), and for a venv everything in it.
+#: this Python runs from: the interpreter, its link target and every folder above either that it owns or may write
+#: in, and for a venv everything in it. Python reads its folder and the one above (a pyvenv.cfg there changes what
+#: it loads), so those count whatever their sticky bit; higher up, a sticky folder (/tmp) lets it replace only
+#: what it owns there.
 _POSIX_WRITABLE = """py=$1
 test -f "$py" && test -x "$py" || { echo MISSING; exit 0; }
 real=$(readlink -f -- "$py")
 for p in "$py" "$real"; do
   case $p in /*) ;; *) continue ;; esac
+  depth=0 child=
   while :; do
-    if test -w "$p" || test -O "$p"; then printf '%s\\n' "$p"; fi
+    if test -O "$p"; then printf '%s\\n' "$p"
+    elif test -w "$p" && { [ "$depth" -le 2 ] || ! test -k "$p" || test -O "$child"; }; then printf '%s\\n' "$p"
+    fi
     [ "$p" = / ] && break
+    depth=$((depth + 1)) child=$p
     p=$(dirname -- "$p")
   done
 done
