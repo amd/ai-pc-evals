@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:  # release.yml runs these same jobs on a tag before it publishes
 
 permissions:
   contents: read
@@ -37,7 +38,7 @@ jobs:
       - name: Shell syntax
         shell: bash
         run: for f in $(git ls-files '*.sh'); do bash -n "$f"; done
-      - run: python -m pytest -q
+      - run: python -m pytest -q -rs  # -rs: every skip and its reason, in the log
 
   # Linux Layer 4 for real (#59): agents and probes as a separate user through sudo, POSIX ACLs, the sticky bit,
   # and cron and timer containment, which the pytest job covers only with mocks. GitHub's Ubuntu runners have
