@@ -1666,17 +1666,44 @@ def test_the_cli_records_what_the_app_showed_under_run_info(tmp_path, capsys):
     run_dir = _prepared(tmp_path)
     answer = tmp_path / "answer.md"
     answer.write_text("Total 1,234.50", encoding="utf-8")
-    cli.main(["record", str(run_dir), SMOKE, "--answer-file", str(answer), "--wall-seconds", "340",
+    cli.main(["record", str(run_dir), SMOKE, "--answer-file", str(answer), "--wall-seconds", "240",
               "--harness", "perplexity-local", "--model", "local", "--app-version", "26.10.2 (117519)",
               "--mode", "local", "--queue-seconds", "610", "--local-tokens", "48210",
               "--engine-build", "b10825-9e0e220"])
     data = json.loads((run_dir / ".records" / SMOKE / "result.json").read_text(encoding="utf-8"))
     assert data["run_info"] == {"app_version": "26.10.2 (117519)", "mode": "local", "queue_seconds": 610.0,
                                 "local_tokens": 48210, "engine_build": "b10825-9e0e220"}
-    assert data["wall_seconds"] == 340.0 and "error" not in data
+    assert data["wall_seconds"] == 240.0 and "error" not in data and "timed_out" not in data
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(f"record R {SMOKE} --answer-file a --wall-seconds 1 --harness h "
                                       "--model m --outcome gave-up".split())
+
+
+def test_a_run_recorded_past_its_time_cap_is_timed_out_and_fails(tmp_path, monkeypatch, capsys):
+    """A command-line agent is stopped at its cap and fails; a run recorded by hand (tools/perplexity's record.sh,
+    rec_thread.sh) can't be, so recording it past the task's max_minutes marks it timed out and failed."""
+    run_dir = _prepared(tmp_path)  # kw-00-smoke: 5 minutes
+    (run_dir / SMOKE / "summary.md").write_text(GOOD_SUMMARY)
+    answer = tmp_path / "answer.md"
+    answer.write_text("Total 1,234.50; INV-1002 was entered twice.", encoding="utf-8")
+    result = run_dir / ".records" / SMOKE / "result.json"
+
+    def record(*extra):
+        cli.main(["record", str(run_dir), SMOKE, "--answer-file", str(answer), "--harness", "perplexity-local",
+                  "--model", "local", "--force", *extra])
+        return json.loads(result.read_text(encoding="utf-8")), capsys.readouterr().out
+    data, out = record("--wall-seconds", "300")  # at the cap is within it
+    assert "timed_out" not in data and "error" not in data and "[TIMED OUT]" not in out
+    data, out = record("--wall-seconds", "2400")
+    assert data["timed_out"] is True and data["error_kind"] == "failed"
+    assert data["error"] == "ran 2400s, over the 300s time cap" and "[TIMED OUT] kw-00-smoke" in out
+    _fake_judge(monkeypatch)
+    (entry,) = grade.grade_run(run_dir, "judge-model", {})["tasks"]
+    assert entry["passed"] is False and entry["timed_out"] is True and entry["why"].startswith("ran 2400s")
+    data, _ = record("--wall-seconds", "2400", "--outcome", "stalled-asked-human")
+    assert data["timed_out"] is True and data["error"].startswith("stalled")
+    data, _ = record("--wall-seconds", "2400", "--outcome", "did-not-run")  # never ran: not measured, not timed out
+    assert "timed_out" not in data and data["error_kind"] == "unavailable"
 
 
 def test_regrading_part_of_a_run_with_other_extract_libraries_says_mixed():
@@ -1691,6 +1718,12 @@ def test_regrading_part_of_a_run_with_other_extract_libraries_says_mixed():
                              ["a", "b"])["extract_libraries"] == libs
     before = grade.merge_cards({"judge_model": "j", "tasks": [entry]}, new, ["a", "b"], ["a", "b"])
     assert before["extract_libraries"]["pypdf"] == "mixed: 7.0.0, unrecorded"
+
+
+def test_a_time_cap_is_not_checked_where_the_runs_task_file_cant_be_read(tmp_path):
+    run = {"tasks_file": str(tmp_path / "gone.json"), "tasks": {SMOKE: {}}}
+    assert workspace.time_cap_seconds(run, SMOKE) is None and workspace.time_cap_error(9999, None) == ""
+    assert workspace.time_cap_seconds(workspace.read_run(_prepared(tmp_path)), SMOKE) == 300
 
 
 def test_a_result_without_run_info_has_none_and_old_results_still_grade(tmp_path):

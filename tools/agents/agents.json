@@ -84,6 +84,10 @@
    "web",
    "connectors",
    "multimodal"
+  ],
+  "legs": [
+   "cloud",
+   "local"
   ]
  }
 }
