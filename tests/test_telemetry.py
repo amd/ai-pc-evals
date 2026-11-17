@@ -62,6 +62,19 @@ def test_two_answering_servers_are_not_guessed_between(monkeypatch):
     assert telemetry.find_server([SERVER, {**SERVER, "pid": 5, "port": 8081}])[0]["port"] == 8081
 
 
+def test_an_embedding_llama_server_is_not_the_one_measured(monkeypatch):
+    """GAIA's document index runs a llama-server with --embeddings beside the chat model's: it is skipped, so the
+    chat server is measured rather than the choice being called ambiguous."""
+    text = METRICS.format(pt=1, ps=1, ot=1, os_=1)
+    fake_metrics(monkeypatch, {8080: text, 8081: text})
+    embedder = {**SERVER, "pid": 5, "port": 8081, "model": "nomic-embed-text-v2.gguf", "embeddings": True}
+    server, before, why = telemetry.find_server([embedder, SERVER])
+    assert server is SERVER and before is not None and why is None
+    monkeypatch.setattr(telemetry, "probe", lambda: [])
+    server, _, why = telemetry.find_server([embedder])
+    assert server is None and "other than an embedding llama-server (port 8081)" in why
+
+
 def test_idle_task_and_restarted_server():
     a = {n: 10.0 for n in telemetry._names("llama-server")}
     idle = telemetry.server_block(SERVER, a, dict(a), None)

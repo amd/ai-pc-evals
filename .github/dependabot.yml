@@ -20,3 +20,9 @@ updates:
     groups:
       pip:
         patterns: ["*"]
+    ignore:
+      # pypdf extracts the PDF text the judge reads (kwengine/extract.py), and 7.0 changes the word spacing of
+      # some pages ("Total AssetsUnrealized"). Moving it to a new major needs a re-grade of the runs you compare
+      # first (see CONTRIBUTING.md), so it is bumped by hand, not by Dependabot.
+      - dependency-name: pypdf
+        update-types: ["version-update:semver-major"]
