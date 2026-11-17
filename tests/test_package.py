@@ -48,6 +48,8 @@ def test_unpacked_package_reports_its_own_version(tmp_path, monkeypatch):
     assert v["commit"] == "c0ffee" and v["dirty"] is False
     assert v["framework"] == (package.REPO / "VERSION").read_text().strip()
     assert v["tasks"] == evalversion.tasks_fingerprint(package.REPO)
+    # The libraries that decide what the judge reads are named in every eval-version record.
+    assert set(v["libraries"]) == {"pypdf", "pypdfium2", "openpyxl", "python-docx", "python-pptx"}
 
 
 def test_the_public_answers_are_shipped_and_maintainer_notes_are_not():
@@ -55,6 +57,22 @@ def test_the_public_answers_are_shipped_and_maintainer_notes_are_not():
                  "answers/keys/kw-01-multihop-research.json"]
     assert package.shipped(published) == published
     assert package.shipped(["knowledgework/INVENTORY.md", "tests/test_keys.py"]) == []
+
+
+def test_the_operators_skill_ships_with_every_file_in_it(tmp_path, monkeypatch):
+    # .claude/skills/ai-pc-evals/ is the Claude Code skill eval PCs operate the harness with: a dot folder, so an
+    # EXCLUDE rule or a .gitignore line could drop it from the zip without anyone noticing.
+    skill = package.REPO / ".claude" / "skills" / "ai-pc-evals"
+    on_disk = sorted(p.relative_to(package.REPO).as_posix() for p in skill.rglob("*") if p.is_file())
+    assert ".claude/skills/ai-pc-evals/SKILL.md" in on_disk
+    assert package.shipped(on_disk) == on_disk
+    tracked = package.tracked_files()
+    assert set(on_disk) <= set(tracked), "every skill file must be committed (.gitignore keeps .claude/skills/)"
+    monkeypatch.setattr(evalversion, "version", lambda repo=None: {"framework": "9.9.9", "tasks": "abc", "commit": "c", "dirty": False})
+    z = package.build(tmp_path, "", files=[f for f in tracked if (package.REPO / f).is_file()])
+    rel = {n.split("/", 1)[1] for n in zipfile.ZipFile(z).namelist()}
+    assert set(on_disk) <= rel, sorted(set(on_disk) - rel)
+    assert not any(r.startswith(".claude/") and not r.startswith(".claude/skills/") for r in rel)
 
 
 def test_tag_must_match_version(tmp_path, monkeypatch):

@@ -69,6 +69,9 @@ class Source:
 def _download(url: str, dest: Path, attempts: int = 3) -> None:
     import requests  # eCFR refuses a client that does not accept gzip
 
+    from kwengine.tls import TLS_HINT, is_cert_error, use_os_trust_store
+
+    use_os_trust_store()  # a TLS-inspecting corporate proxy's root is in the OS store, not Python's list
     last: Optional[Exception] = None
     for attempt in range(attempts):
         try:
@@ -82,6 +85,8 @@ def _download(url: str, dest: Path, attempts: int = 3) -> None:
             return
         except (OSError, requests.RequestException) as exc:  # transient resets
             last = exc
+            if is_cert_error(exc):  # not transient: retrying only delays the hint
+                raise RuntimeError(f"Could not download {url}: {exc}. {TLS_HINT}") from exc
             time.sleep(5 * (attempt + 1))
     raise RuntimeError(
         f"Could not download {url} after {attempts} attempts: {last}. Check the "
@@ -101,12 +106,26 @@ class PinMismatchError(RuntimeError):
     """A downloaded source is not the bytes its SHA-256 pin names."""
 
 
-#: Pinned sources whose upstream bytes are known to have changed since RETRIEVED.
-#: Build these from a pinned copy placed in the cache (see verify_pin).
+#: Pinned sources whose upstream bytes are known to have changed since they were pinned (last checked
+#: 2026-11-16). Build these from a pinned copy: the team mirror (KW_MIRROR) or the cache (see verify_pin).
+_EVERY_DOWNLOAD = "a new file on every download, so only a mirror or archived copy works, never a re-pin"
+_GISTEMP = ("https://data.giss.nasa.gov/gistemp/graphs_v4/graph_data/"
+            "Global_Mean_Estimates_based_on_Land_and_Ocean_Data/graph.")
 KNOWN_CHANGED: Dict[str, str] = {
     "https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&starttime=2024-01-01"
     "&endtime=2024-02-01&minmagnitude=4.5": "kw-14: USGS re-exports the query with revised events",
+    "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2024-01-01"
+    "&endtime=2024-02-01&minmagnitude=4.5": "kw-14: USGS stamps the export with the time it was made, "
+    + _EVERY_DOWNLOAD,
+    "https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/holidays.ics":
+        "kw-14: OPM writes new timestamps and UIDs into the calendar, " + _EVERY_DOWNLOAD,
     "https://gml.noaa.gov/webdata/ccgg/trends/co2_data_mlo.png": "kw-15: NOAA redraws the chart as data arrive",
+    _GISTEMP + "csv": "kw-15: GISS revises the series as data arrive",
+    _GISTEMP + "png": "kw-15: GISS redraws the chart as data arrive",
+    "https://www.govinfo.gov/content/pkg/CFR-2025-title41-vol4/pdf/CFR-2025-title41-vol4.pdf":
+        "kw-06: govinfo serves a different PDF than the pinned one",
+    "https://datasheets.raspberrypi.com/rpi5/raspberry-pi-5-product-brief.pdf":
+        "kw-02: Raspberry Pi revised the product brief",
 }
 
 
@@ -175,6 +194,8 @@ def fetch(src: Source) -> Path:
 # --------------------------------------------------------------------------
 
 SOURCES: Dict[str, List[Source]] = {}
+#: Pinned sources a builder fetches itself instead of listing in SOURCES; --export-mirror copies them too.
+EXTRA_SOURCES: List[Source] = []
 
 #: url -> sha256 of the bytes retrieved on RETRIEVED.
 # BEGIN PINS (generated)
@@ -224,15 +245,10 @@ PINS: Dict[str, str] = {
     "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2024-01-01&endtime=2024-02-01&minmagnitude=4.5": "7e61cfbdc4a0e42c15d05288f6fac7e13170d83cbb1b1bbf86b81679879d0e60",
     "https://fraser.stlouisfed.org/files/docs/publications/bls/bls_0518_1930.pdf": "bbba80f965b8d1d07d33002cce5821a938afa45165ac0cedda900c031f984e10",
     "https://fraser.stlouisfed.org/files/docs/publications/bls/bls_no1517.pdf": "243f371f84fdadf37cb54889b60220c2172ec3dc105892caacc9cd036dec5a12",
-    "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCSL": "f8ecddf53a9a9a74dda92c2c4204e6039466fcb744bc74171b73b5f6aac48119",
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCSL&cosd=2016-01-01&coed=2026-08-01": "09d519ffaabc0aef6333e3ded3e664fa50f296d24ed6dbbf37688cf59cfdb754",
-    "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10": "107288572fcfbf2709617bec1e6c10b5e4f6c13b33bc4b5f3e6ef5c7ba5df7c5",
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=2016-01-01&coed=2026-09-30": "1a422f26c3ed470a1a2183c76376a3edc8a07e3fead943aa82badf07956d0f85",
-    "https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS": "74680b2d09bb28f90fb30c1c09e93ac2d443de1b7345ba5a9112b3eca9be0a25",
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2016-01-01&coed=2026-08-01": "753e76eb97dc059bfbe82ac46af5b5deab0f1f79903232705dfb06cc499a4e82",
-    "https://fred.stlouisfed.org/graph/fredgraph.csv?id=RSXFS": "6f915e4a63b720284285e595bdebe1f3449362929f2765335e80996b390034a0",
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=RSXFS&cosd=2016-01-01&coed=2026-08-01": "6d99866f6d9cfa68fbcbe25c66283add1805bcd81051064906568f90df9d1a64",
-    "https://fred.stlouisfed.org/graph/fredgraph.csv?id=UNRATE": "621ff6fadf50910cb7a21ee20ba610c247cb043b29b4e05c4c1a72fadca2a06c",
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=UNRATE&cosd=2016-01-01&coed=2026-08-01": "09c98f442c41a3767ff2fe077a2fa5e97d5cd55900b42d73e7d17a0cb85657c7",
     "https://gml.noaa.gov/webdata/ccgg/trends/ch4_trend_all_gl.png": "096dca9ed9380ce4ca17c7d2b05619ae01a8934d2e16f5752b064b9887c03f36",
     "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt": "42acfe30569dd7134bda3ac3eb74e347a55b5133c3926557410e1b4ec4423f7f",
@@ -1478,6 +1494,7 @@ def _receipt_pdf(path: Path, title: str, lines: Sequence[str]) -> None:
 SOURCES["kw-06-expense-audit"] = [s for s in SOURCES["kw-06-expense-audit"] if not s.name.endswith(".xml")]
 ECFR_301 = _s("title-41-chapter-301.xml", "https://www.ecfr.gov/api/versioner/v1/full/2026-09-22/title-41.xml?chapter=301",
               _US + " (eCFR)")
+EXTRA_SOURCES.append(ECFR_301)
 
 
 @builder("kw-06-expense-audit")
@@ -2111,6 +2128,9 @@ CALC_URL = "https://api.gsa.gov/acquisition/calc/v3/api/ceilingrates/?search=idv
 def verify_calc_extract() -> None:
     import requests
 
+    from kwengine.tls import use_os_trust_store
+
+    use_os_trust_store()
     live: Dict[int, Any] = {}
     for page in range(1, 20):
         resp = requests.get(CALC_URL + f"&page={page}", headers={"User-Agent": USER_AGENT}, timeout=60)
@@ -2751,7 +2771,7 @@ def download(tasks: Sequence[str]) -> None:
 def export_mirror(dest: Path) -> Tuple[int, List[str]]:
     """Copy every pinned original in the cache to *dest* (<sha256>/<name>); returns (copied, missing urls)."""
     copied, missing = 0, []
-    for src in (s for srcs in SOURCES.values() for s in srcs):
+    for src in [s for srcs in SOURCES.values() for s in srcs] + EXTRA_SOURCES:
         pin = PINS.get(src.url)
         if not pin:
             continue

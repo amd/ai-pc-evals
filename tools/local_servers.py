@@ -5,8 +5,9 @@
     python tools/local_servers.py        # JSON: every llama-server, Ollama, LM Studio, Lemonade, vLLM and SGLang process
 
 Each server is ``{"pid", "kind", "name", "model", "port", "path"}``, parsed from its command line; a
-field the command line doesn't give is None. Uses psutil when it is installed, which also gives the
-process's ``"user"`` (None when it can't be read); on Windows without it, one PowerShell
+field the command line doesn't give is None. A llama-server started with ``--embeddings`` (an embedding model, such
+as the one GAIA's document index loads beside its chat model) also has ``"embeddings": True``. Uses psutil when it
+is installed, which also gives the process's ``"user"`` (None when it can't be read); on Windows without it, one PowerShell
 ``Get-CimInstance`` call, with no user. Elsewhere without psutil the list is empty.
 
 vLLM and SGLang are Python programs, so they are told apart by their command line (``vllm serve``,
@@ -35,14 +36,18 @@ KINDS = {
     "lemonade-server": "lemonade",
     "lemonade-server-dev": "lemonade",
     "lemonade-router": "lemonade",
+    "lemond": "lemonade",  # Lemonade's embeddable daemon, which GAIA 0.25 runs as its own model server
+    "lemonadeserver": "lemonade",  # the Windows installer's LemonadeServer.exe
 }
 #: Process names (lowercase, starting so) that may be a Python-launched server: its command line says which.
 #: `vllm serve` runs as "vllm", `python3 -m sglang.launch_server` as "python3". Their GPU workers rename themselves
 #: (VLLM::EngineCore, sglang::scheduler) and aren't listed: telemetry finds them as the server's children.
 PYTHON_NAMES = ("python", "vllm", "sglang")
-#: Default ports, when the command line doesn't name one.
-DEFAULT_PORTS = {"llama-server": 8080, "ollama": 11434, "lm-studio": 1234, "lemonade": 8000, "vllm": 8000,
+#: Default ports, when the command line doesn't name one. Lemonade's moved from 8000 to 13305 in its 10.1.
+DEFAULT_PORTS = {"llama-server": 8080, "ollama": 11434, "lm-studio": 1234, "lemonade": 13305, "vllm": 8000,
                  "sglang": 30000}
+#: llama-server flags that make it serve an embedding model, not a chat model (llama.cpp takes both spellings).
+EMBEDDING_FLAGS = ("--embeddings", "--embedding")
 PS_TIMEOUT_S = 30
 
 
@@ -90,7 +95,7 @@ def describe(pid: int, name: str, args: Sequence[str]) -> Optional[Dict[str, Any
         model = _flag(args, "--model-path", "--model")
     else:
         model = _flag(args, "-m", "--model", "-hf", "--hf-repo", "--model-path")
-    return {
+    server = {
         "pid": pid,
         "kind": kind,
         "name": PureWindowsPath(name).name,
@@ -98,6 +103,9 @@ def describe(pid: int, name: str, args: Sequence[str]) -> Optional[Dict[str, Any
         "port": int(port) if port and port.isdigit() else DEFAULT_PORTS[kind],
         "path": args[0] if args else "",
     }
+    if kind == "llama-server" and any(a in EMBEDDING_FLAGS for a in args[1:]):
+        server["embeddings"] = True
+    return server
 
 
 def _from_psutil() -> List[Dict[str, Any]]:
