@@ -127,6 +127,8 @@ KNOWN_CHANGED: Dict[str, str] = {
         "kw-06: govinfo serves a different PDF than the pinned one",
     "https://datasheets.raspberrypi.com/rpi5/raspberry-pi-5-product-brief.pdf":
         "kw-02: Raspberry Pi revised the product brief",
+    "https://fred.stlouisfed.org/graph/fredgraph.csv?id=RSXFS&cosd=2016-01-01&coed=2026-08-01":
+        "kw-12: FRED revises the retail sales series as data arrive",
 }
 #: Of those, the ones whose bytes differ on every download: tools/check_sources.py reports them apart, as information.
 VOLATILE = frozenset(url for url, why in KNOWN_CHANGED.items() if _EVERY_DOWNLOAD in why)
