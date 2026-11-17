@@ -19,9 +19,11 @@ jobs:
       - name: The tag matches VERSION (before anything slow)
         run: test "v$(tr -d '\r\n' < VERSION)" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$(cat VERSION)"; exit 1; }
 
-  # The same jobs a pull request must pass, run on the tagged commit itself: every pytest leg (both systems, each
-  # Python), the Linux Layer 4 tests for real, the release-zip smoke run, and lint. A tag can't publish what
-  # main's CI would reject. They get this workflow's read-only token.
+  # Every check workflow, run on the tagged commit itself, and package needs them all: a tag can't publish what
+  # CI would reject. The jobs a pull request must pass (every pytest leg, the Linux Layer 4 tests, the release-zip
+  # smoke run, lint; fingerprint-note runs on pull requests only and is skipped here), the probe tests with the
+  # answers, the pinned-source check, the dependency audit and the agent CLIs' flags. tests/test_workflows.py checks
+  # that every workflow but this one and outside-prs.yml is called here and needed by package.
   tests:
     needs: version
     uses: ./.github/workflows/tests.yml
@@ -30,8 +32,38 @@ jobs:
     needs: version
     uses: ./.github/workflows/lint.yml
 
+  # These two use the answers environment (its KW_ANSWERS_PASSPHRASE secret), which must allow v* tags as well as
+  # main. The environment hands the called jobs its secret itself: nothing is passed from here.
+  probes:
+    needs: version
+    uses: ./.github/workflows/probes.yml
+
+  # issues: write only because the called workflow's weekly report job declares it, and a called job can't ask for
+  # more than its caller grants. That job runs on the weekly schedule (or by hand) only, so here it is skipped and
+  # files nothing; the checking jobs run with contents: read.
+  sources:
+    needs: version
+    uses: ./.github/workflows/sources.yml
+    permissions:
+      contents: read
+      issues: write
+
+  audit:
+    needs: version
+    uses: ./.github/workflows/audit.yml
+    permissions:
+      contents: read
+      issues: write
+
+  agent-clis:
+    needs: version
+    uses: ./.github/workflows/agent-clis.yml
+    permissions:
+      contents: read
+      issues: write
+
   package:
-    needs: [tests, lint]
+    needs: [tests, lint, probes, sources, audit, agent-clis]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Only this job can write, and it runs no tests and installs nothing beyond what packaging needs.
