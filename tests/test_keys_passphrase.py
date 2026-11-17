@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Rotating the answers passphrase and copying it to the clipboard, on temp bundles with a fake keyring."""
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -257,3 +258,71 @@ def test_clipboard_tools_per_platform(monkeypatch):
     monkeypatch.setattr(keys.shutil, "which", lambda name: None)
     assert keys.clipboard_command("linux", {}) is None
     assert keys.clipboard_command("win32", {}) is None
+
+
+# ---------------------------------------------------------------------------
+# fingerprint: compare two PCs without showing the passphrase
+# ---------------------------------------------------------------------------
+
+
+def _short(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+
+
+@pytest.fixture
+def no_heldout_env(monkeypatch):
+    monkeypatch.delenv(keys.HELDOUT_PASSPHRASE_ENV, raising=False)
+
+
+def test_fingerprint_prints_length_and_short_hash_never_the_value(fake_keyring, capsys):
+    fake_keyring.set_password(keys.KEYRING_SERVICE, keys.KEYRING_USER, h.PASSPHRASE)
+    assert keys.main(["fingerprint"]) == 0
+    out = capsys.readouterr()
+    assert out.out.splitlines()[0] == (f"answers-passphrase: {len(h.PASSPHRASE)} characters, fingerprint "
+                                       f"{_short(h.PASSPHRASE)} (from the credential store, "
+                                       "ai-pc-evals/answers-passphrase)")
+    assert h.PASSPHRASE not in out.out + out.err
+    assert not any(word in out.out for word in h.PASSPHRASE.split() if len(word) > 3)
+
+
+def test_fingerprint_says_the_environment_wins_and_shows_both(fake_keyring, monkeypatch, capsys):
+    fake_keyring.set_password(keys.KEYRING_SERVICE, keys.KEYRING_USER, h.PASSPHRASE)
+    monkeypatch.setenv(keys.PASSPHRASE_ENV, NEW)
+    assert keys.main(["fingerprint"]) == 0
+    out = capsys.readouterr().out
+    assert f"{len(NEW)} characters, fingerprint {_short(NEW)} (from {keys.PASSPHRASE_ENV} in this shell)" in out
+    assert f"credential store: {len(h.PASSPHRASE)} characters, fingerprint {_short(h.PASSPHRASE)}" in out
+    assert NEW not in out and h.PASSPHRASE not in out
+
+
+def test_fingerprint_heldout_reads_the_heldout_passphrase(fake_keyring, no_heldout_env, monkeypatch, capsys):
+    fake_keyring.set_password(keys.KEYRING_SERVICE, keys.KEYRING_USER, h.PASSPHRASE)
+    fake_keyring.set_password(keys.KEYRING_SERVICE, keys.HELDOUT_KEYRING_USER, NEW)
+    assert keys.main(["fingerprint", "--heldout"]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == (f"heldout-passphrase: {len(NEW)} characters, fingerprint {_short(NEW)} "
+                                   "(from the credential store, ai-pc-evals/heldout-passphrase)")
+    assert _short(h.PASSPHRASE) not in out and NEW not in out
+    monkeypatch.setenv(keys.HELDOUT_PASSPHRASE_ENV, h.PASSPHRASE)
+    assert keys.main(["fingerprint", "--heldout"]) == 0
+    out = capsys.readouterr().out
+    assert f"fingerprint {_short(h.PASSPHRASE)} (from {keys.HELDOUT_PASSPHRASE_ENV} in this shell)" in out
+    assert f"credential store: {len(NEW)} characters, fingerprint {_short(NEW)}" in out
+    assert h.PASSPHRASE not in out
+
+
+def test_fingerprint_without_a_passphrase_fails_with_the_usual_fix(fake_keyring, no_heldout_env, repo, capsys):
+    assert keys.main(["fingerprint"]) == 2
+    out = capsys.readouterr()
+    assert "No passphrase for the encrypted answers" in out.err
+    assert "keyring set ai-pc-evals answers-passphrase" in out.err and "fingerprint" not in out.out
+    assert keys.main(["fingerprint", "--heldout"]) == 2
+    assert "keyring set ai-pc-evals heldout-passphrase" in capsys.readouterr().err
+
+
+def test_fingerprint_once_published_says_no_answers_passphrase_is_needed(fake_keyring, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(keys, "REPO", tmp_path)
+    (tmp_path / keys.ANSWERS_DIR).mkdir()
+    (tmp_path / keys.ANSWERS_DIR / "tasks.json").write_text("{}", encoding="utf-8")
+    assert keys.main(["fingerprint"]) == 0
+    assert "none is needed" in capsys.readouterr().out
