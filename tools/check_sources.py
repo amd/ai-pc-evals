@@ -13,7 +13,7 @@ Sources already acknowledged as changed (KNOWN_CHANGED: their pinned bytes come 
 volatile ones (VOLATILE: new bytes on every download) are reported apart, as information. It exits 1 when another
 source changed, or any other source is unreachable or blocked.
 
-``impact`` needs the answers (the passphrase, or answers/ once published). For each task of a source that changed
+``impact`` needs the answers (the answers passphrase, for secrets/answers.enc). For each task of a source that changed
 and isn't acknowledged, it builds the task from the new upstream bytes (build_fixtures.py --candidate-pins, keys
 in a throwaway folder deleted after) and compares the keys, field by field, with the current ones, read in memory.
 Per task: the key is unchanged, would change (the names of the fields), or the build failed. It exits 1 unless
