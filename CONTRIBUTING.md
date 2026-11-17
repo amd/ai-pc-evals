@@ -47,7 +47,7 @@ Every change goes through a pull request against `main`. Nobody pushes to `main`
 
 A third workflow, **agent CLIs**, runs weekly and on pull requests that change `tools/agents/` (not a required check): it installs the latest OpenCode, Pi, OpenClaw and Hermes, and AMD GAIA 0.25.4, and checks every flag `agents.json` passes them (`tools/check_agent_flags.py`). The weekly run opens one issue when a flag is gone. A fourth, **dependency audit**, checks the pinned packages for known vulnerabilities weekly and on pull requests that change the requirements (not a required check either).
 
-A pull request merges once both are green and a maintainer has reviewed it.
+A pull request merges once both are green and a maintainer has reviewed it. A release tag runs the same two workflows again (`release.yml`) and publishes only if they pass.
 
 ## Changes to ground truth
 
