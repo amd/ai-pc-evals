@@ -319,3 +319,21 @@ def test_what_the_skill_quotes_and_tells_the_operator_to_type_matches_the_runner
     for word in ("stalled", "skip"):
         assert f"'{word}'" in step4 and f"`{word}`" in operator, word
     assert "`queue 2m 10s, tokens 48210`" in operator and "'queue 2m 10s, tokens 48210'" in dialogue
+
+
+def test_the_console_lines_the_skill_quotes_are_the_ones_run_eval_prints(monkeypatch):
+    """run_eval.py prints `key: value` lines: the skill quotes the key and the text after it, as printed."""
+    import run_eval  # noqa: PLC0415
+
+    text = "".join(p.read_text(encoding="utf-8") for p in SKILL_FILES)
+    for key in ("warning", "not built"):
+        assert run_eval.kv(key, "x", indent="").startswith(f"{key}: ") and f"`{key}:`" in text, key
+    printed = run_eval.kv("not graded", "grade later with: run_eval.py --grade-only <run>", indent="")
+    assert f"`{printed}`" in text
+    monkeypatch.setattr(run_eval, "passphrase_reachable", lambda ids=None: True)
+    monkeypatch.setattr(run_eval.keys, "published", lambda *a, **k: False)
+    keyring = next(line for line in run_eval.same_user_warnings("same-user", [{"id": "kw-01", "tags": []}], True)
+                   if "keyring del" in line)
+    quoted = re.search(r"`(an answers passphrase is in your keyring[^`]*?) \(python -m keyring del", text).group(1)
+    assert keyring.startswith(quoted)
+    assert "result: not graded" in text and run_eval.kv("result", "x").strip().startswith("result: ")
