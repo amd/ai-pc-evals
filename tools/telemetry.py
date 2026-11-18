@@ -963,15 +963,18 @@ def settings(server: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return out
 
 
-def settings_block(read: str = "before the task", servers: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+def settings_block(read: str = "before the task", servers: Optional[List[Dict[str, Any]]] = None,
+                   probe_ports: bool = True) -> Dict[str, Any]:
     """The settings of every llama-server, vLLM and SGLang serving now (``servers``), found again each time as
     find_server finds them (not the agent user's, not an embedding llama-server), or why there are none. *read*
-    says when. One GET per server; never raises."""
+    says when. With no server in the process list, vLLM's and SGLang's default ports are tried only with
+    *probe_ports*: on Windows a port nothing listens on takes about 2 s to refuse. One GET per server (each
+    capped at a few seconds); never raises."""
     out: Dict[str, Any] = {"read": read, "servers": [], "reason": None}
     try:
         ours, _, theirs, agent = _ours(local_servers.list_servers() if servers is None else servers)
         listed = [s for s in ours if s["kind"] in SOURCES and s.get("port")]
-        if not listed and not theirs:  # vLLM or SGLang in Docker Desktop: found by its /metrics on its default port
+        if not listed and not theirs and probe_ports:  # vLLM or SGLang in Docker Desktop: its /metrics, default port
             listed = [s for s, _ in probe()]
         found = [x for x in (settings(s) for s in listed) if x]
         out["servers"] = sorted(found, key=lambda x: (str(x.get("model_path") or x.get("model")), x.get("port") or 0))

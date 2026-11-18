@@ -53,7 +53,7 @@ def _no_real_model_server(monkeypatch):
     A test of that reading calls tests.test_telemetry's REAL_SETTINGS."""
     import telemetry
 
-    monkeypatch.setattr(telemetry, "settings_block", lambda read="before the task", servers=None: {
+    monkeypatch.setattr(telemetry, "settings_block", lambda read="before the task", servers=None, probe_ports=True: {
         "read": read, "servers": [], "reason": "no model server (tests)"})
 
 
