@@ -12,6 +12,9 @@ on:
     - cron: "47 5 * * 1"  # Mondays 05:47 UTC
   workflow_dispatch:
   workflow_call:  # release.yml: a tag publishes only if these pass
+    secrets:  # a caller must pass it (release.yml: secrets: inherit); missing, the run fails rather than skips
+      KW_ANSWERS_PASSPHRASE:
+        required: true
 
 permissions:
   contents: read
