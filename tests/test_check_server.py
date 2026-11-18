@@ -279,10 +279,14 @@ def test_run_eval_check_server_stops_before_the_first_task(tmp_path, monkeypatch
 
     monkeypatch.setattr(run_eval, "EVAL_HOME", tmp_path / "home")
     monkeypatch.setattr(run_eval, "get_agent", lambda name, model: Fake(model))
-    monkeypatch.setattr(cs, "run_checks", lambda model=None, need_metrics=True: [
-        cs.Check("server", "ok", f"http://x/v1, llama-server, model {model}"),
-        cs.Check("tool calls", "FAIL", "start llama-server with --jinja"),
-        cs.Check("metrics", "note" if not need_metrics else "FAIL", "none")])
+    def run_checks(model=None, need_metrics=True, model_is_label=False, report=None):
+        checks = [cs.Check("server", "ok", f"http://x/v1, llama-server, model {model}"),
+                  cs.Check("tool calls", "FAIL", "start llama-server with --jinja"),
+                  cs.Check("metrics", "note" if not need_metrics else "FAIL", "none")]
+        for c in checks:
+            report(c)
+        return checks
+    monkeypatch.setattr(cs, "run_checks", run_checks)
     with pytest.raises(run_eval.EvalError, match="isn't ready for this run"):
         run_eval.run("fake", "haiku", "verify", ["verify-02"], tmp_path / "out", tmp_path / "fx", "m",
                      do_grade=False, check_server=True)
@@ -290,3 +294,76 @@ def test_run_eval_check_server_stops_before_the_first_task(tmp_path, monkeypatch
     assert "server:     ok (http://x/v1, llama-server, model haiku)" in out
     assert "tool calls: FAIL: start llama-server with --jinja" in out and "metrics:    none" in out
     assert not (tmp_path / "out").exists()  # no task was prepared
+
+
+def test_no_key_or_password_is_printed(fake, monkeypatch, capsys):
+    """KW_LOCAL_API_KEY is sent but never printed, even when the server echoes it in an error, and neither is a
+    password in the URL. A short key is redacted too."""
+    for key in ("sk-local-0123456789abcdef", "k3y!"):
+        monkeypatch.setenv("KW_LOCAL_API_KEY", key)
+        routes = llama_routes()
+        routes["POST"] = (500, {"error": f"bad request from Bearer {key}: tools param requires --jinja flag"})
+        srv = fake(routes)
+        cs.main(["--base-url", srv.root + "/v1", "--model", "qwen"])
+        out = capsys.readouterr().out
+        assert "tool calls: FAIL" in out and "--jinja" in out and key not in out
+    url = srv.root.replace("http://", "http://me:hunter2-secret@") + "/v1?token=abc123secret"
+    checks = cs.run_checks(url, "qwen")
+    text = " ".join(c.text for c in checks)
+    assert "hunter2" not in text and "abc123secret" not in text and "me:" not in text
+    assert cs.shown(url) == srv.root + "/v1?…"
+
+
+def test_a_slow_server_is_given_up_on(fake, monkeypatch):
+    """A server that takes too long to answer the tool-call request fails that check: it never hangs the run."""
+    import time
+
+    gate = threading.Event()
+    srv = fake(llama_routes())
+    real = srv.server.RequestHandlerClass.do_POST
+
+    def slow(self):
+        gate.wait(5)  # answers only after the check has given up
+        real(self)
+    srv.server.RequestHandlerClass.do_POST = slow
+    monkeypatch.setattr(cs, "CHAT_TIMEOUT_S", 0.5)
+    started = time.monotonic()
+    c = by_key(cs.run_checks(srv.root + "/v1", "qwen"))["tool calls"]
+    gate.set()
+    assert c.status == "FAIL" and "no reply to a chat request in 0.5 s" in c.text
+    assert time.monotonic() - started < 5
+
+
+def test_each_line_is_reported_as_its_check_ends(fake):
+    seen = []
+    checks = cs.run_checks(fake(llama_routes()).root + "/v1", "qwen", report=seen.append)
+    assert [c.key for c in seen] == ["server", "context", "tool calls", "metrics"] and seen == checks
+
+
+def test_gaias_lemonade_with_its_embedding_model_needs_no_model(fake):
+    """GAIA's Lemonade (default port 13305, /api/v1) has the chat model and an embedding model loaded: without
+    --model, and with a manual agent's label for --model, the chat model is the one checked."""
+    srv = lemonade(fake)
+    health = srv.routes["/api/v1/health"][1]
+    health["all_models_loaded"].append({"model_name": "nomic-embed-text-v2-moe-GGUF", "type": "embedding",
+                                        "backend_url": "http://127.0.0.1:1/v1"})
+    srv.routes["/api/v1/models"][1]["data"].append({"id": "nomic-embed-text-v2-moe-GGUF", "owned_by": "lemonade"})
+    checks = by_key(cs.run_checks(srv.root + "/api/v1"))
+    assert not cs.failed(list(checks.values())) and "model Qwen3.6-35B-A3B-GGUF" in checks["server"].text
+    label = by_key(cs.run_checks(srv.root + "/api/v1", "Qwen3.6 35B (GAIA chip)", model_is_label=True))["server"]
+    assert label.status == "ok" and "model Qwen3.6-35B-A3B-GGUF (--model Qwen3.6 35B (GAIA chip) is the leg" in label.text
+    wrong = cs.run_checks(srv.root + "/api/v1", "Qwen3.6 35B (GAIA chip)")[0]  # a CLI agent's --model is an id
+    assert wrong.status == "FAIL" and "doesn't list the model" in wrong.text
+
+
+def test_run_eval_passes_a_manual_agents_model_as_a_label(monkeypatch):
+    import run_eval
+
+    seen = {}
+
+    def run_checks(model=None, need_metrics=True, model_is_label=False, report=None):
+        seen.update(model=model, label=model_is_label, metrics=need_metrics)
+        return []
+    monkeypatch.setattr(cs, "run_checks", run_checks)
+    run_eval.check_model_server("Qwen3.6 35B", False, manual=True)
+    assert seen == {"model": "Qwen3.6 35B", "label": True, "metrics": False}

@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -102,7 +102,7 @@ def is_local(url: str) -> bool:
 def root(url: str) -> str:
     """http://host:port of a base URL."""
     parts = urllib.parse.urlsplit(url)
-    return f"{parts.scheme}://{parts.netloc}"
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}"  # never a user name or password
 
 
 def request(url: str, body: Optional[Dict[str, Any]] = None, key: Optional[str] = None,
@@ -184,7 +184,7 @@ def check_context(kind: Optional[str], base: str, model: str, entry: Dict[str, A
         n, slots = slot_window(root(base))
         where = "slot n_ctx"
     if not n:
-        return Check("context", "note", f"unknown: {base} doesn't report its window (only llama-server, vLLM, SGLang "
+        return Check("context", "note", f"unknown: {shown(base)} doesn't report its window (only llama-server, vLLM, SGLang "
                                         f"and Lemonade are read): make sure it is {MIN_CONTEXT:,} tokens or more")
     n = int(n)
     if n >= MIN_CONTEXT:
@@ -246,71 +246,133 @@ def check_metrics(kind: Optional[str], base: str, loaded: Optional[Dict[str, Any
     return Check("metrics", "note", f"none at {root(base)}/metrics ({why}: {fix})")
 
 
-def lemonade_loaded(base: str, model: str) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-    """Lemonade's entry for ``model`` among its loaded models (None when it isn't loaded), and every loaded name."""
-    health = get_json(base + "/health") or get_json(root(base) + "/api/v1/health") or {}
+def lemonade_loaded(base: str, model: str, key: Optional[str] = None
+                   ) -> Tuple[Optional[Dict[str, Any]], List[str], List[Dict[str, Any]]]:
+    """Lemonade's entry for ``model`` among its loaded models (None when it isn't loaded), every loaded name, and
+    every loaded entry."""
+    health = get_json(base + "/health", key) or get_json(root(base) + "/api/v1/health", key) or {}
     entries = [e for e in health.get("all_models_loaded") or [] if isinstance(e, dict)] if isinstance(health, dict) else []
     names = [e.get("model_name") for e in entries if e.get("model_name")]
-    return next((e for e in entries if e.get("model_name") == model), None), names
+    return next((e for e in entries if e.get("model_name") == model), None), names, entries
+
+
+def shown(url: str) -> str:
+    """*url* as printed: a user name, password or query (a token some proxies take there) left out."""
+    parts = urllib.parse.urlsplit(url)
+    host = parts.netloc.rpartition("@")[2]
+    return urllib.parse.urlunsplit((parts.scheme, host, parts.path, "", "")) + ("?…" if parts.query else "")
+
+
+def scrubber(key: Optional[str]) -> Callable[[str], str]:
+    """What every printed line goes through: the run's secrets scrubbed as result.json is (kwengine's Scrubber), and
+    the server's key itself, however short."""
+    from kwengine import _support as ft  # noqa: PLC0415
+
+    scrub = ft.Scrubber.from_environment(extra=[key] if key else [])
+
+    def clean(text: str) -> str:
+        text = scrub.scrub(text)
+        return text.replace(key, "[REDACTED:key]") if key and len(key) >= 4 else text
+    return clean
+
+
+#: Lemonade's loaded models that aren't the chat model an agent uses (GAIA loads an embedding model beside it).
+NOT_CHAT = ("embedding", "reranking", "audio", "image", "tts", "transcription")
+
+
+def _chat_models(entries: List[Dict[str, Any]]) -> List[str]:
+    return [e["model_name"] for e in entries if e.get("model_name") and str(e.get("type") or "llm") not in NOT_CHAT
+            and not any(w in str(e["model_name"]).lower() for w in ("embed", "rerank"))]
 
 
 def run_checks(base_url: Optional[str] = None, model: Optional[str] = None, key: Optional[str] = None,
-               need_metrics: bool = True) -> List[Check]:
-    """Every check, in order; a check that can't run once an earlier one failed is a note."""
+               need_metrics: bool = True, model_is_label: bool = False,
+               report: Optional[Callable[[Check], None]] = None) -> List[Check]:
+    """Every check, in order; a check that can't run once an earlier one failed is a note. Each line is scrubbed of
+    secrets, and *report* gets each check as soon as it is made (the tool-call request can take minutes). With
+    *model_is_label* (a manual agent's --model names the leg, as an app shows it), a *model* the server doesn't list
+    falls back to the one model it serves."""
     key = key if key is not None else os.environ.get("KW_LOCAL_API_KEY")
+    clean, out = scrubber(key), []
+    for c in _checks(base_url, model, key, need_metrics, model_is_label):
+        c.text = clean(c.text)
+        out.append(c)
+        if report:
+            report(c)
+    return out
+
+
+def _checks(base_url: Optional[str], model: Optional[str], key: Optional[str], need_metrics: bool,
+            model_is_label: bool) -> Iterator[Check]:
     where = "--base-url" if base_url else ""
     if not base_url and os.environ.get("KW_LOCAL_BASE_URL"):
         base_url, where = os.environ["KW_LOCAL_BASE_URL"], "KW_LOCAL_BASE_URL"
     if not base_url:
         base_url, where = find_base_url()
         if not base_url:
-            return [Check("server", "FAIL", where)]
+            yield Check("server", "FAIL", where)
+            return
     base = base_url.rstrip("/")
+    at = shown(base)
     skipped = [Check(k, "note", "not checked") for k in ("context", "tool calls", "metrics")]
     status, text = request(base + "/models", key=key)
     if status is None:
-        return [Check("server", "FAIL", f"nothing answers at {base} ({where}: {text}): start the model server, or "
-                                        "point --base-url (KW_LOCAL_BASE_URL) at it")] + skipped
+        yield Check("server", "FAIL", f"nothing answers at {at} ({where}: {text}): start the model server, or "
+                                      "point --base-url (KW_LOCAL_BASE_URL) at it")
+        yield from skipped
+        return
     if status in (401, 403):
-        return [Check("server", "FAIL", f"{base} refused the request (HTTP {status}): set KW_LOCAL_API_KEY to its "
-                                        "key")] + skipped
+        yield Check("server", "FAIL", f"{at} refused the request (HTTP {status}): set KW_LOCAL_API_KEY to its key")
+        yield from skipped
+        return
     try:
         data = json.loads(text)["data"] if status == 200 else None
         entries = {str(d["id"]): d for d in data}
     except (ValueError, KeyError, TypeError):
         entries = None
     if not entries:
-        return [Check("server", "FAIL", f"{base}/models answered HTTP {status} with no model list: is {base} the "
-                                        "server's OpenAI base URL (most end in /v1; Lemonade's is /api/v1)?")] + skipped
+        yield Check("server", "FAIL", f"{at}/models answered HTTP {status} with no model list: is {at} the "
+                                      "server's OpenAI base URL (most end in /v1; Lemonade's is /api/v1)?")
+        yield from skipped
+        return
     kinds = {OWNERS.get(str(d.get("owned_by"))) for d in entries.values()} - {None}
     kind = kinds.pop() if len(kinds) == 1 else None
     if kind is None and is_local(base):  # LM Studio, Ollama: their owned_by doesn't say
         port = urllib.parse.urlsplit(base).port
         kind = next((s["kind"] for s in local_servers.list_servers() if s.get("port") == port), None)
     ids = list(entries)
-    loaded_names = lemonade_loaded(base, "")[1] if kind == "lemonade" else []
-    shown = ", ".join(ids[:8]) + (f" and {len(ids) - 8} more" if len(ids) > 8 else "")
-    if model:
-        chosen = match_model(model, ids)
-        if not chosen:
-            return [Check("server", "FAIL", f"{base} doesn't list the model {model}; it lists {shown}: pass the id it "
-                                            "lists")] + skipped
-    elif len(ids) == 1 or len(loaded_names) == 1:  # Lemonade lists every model it has downloaded
-        chosen = ids[0] if len(ids) == 1 else loaded_names[0]
-    else:
-        return [Check("server", "FAIL", f"{base} lists {len(ids)} models ({shown}): pass --model to say which one "
-                                        "the agent uses")] + skipped
+    loaded_names = _chat_models(lemonade_loaded(base, "", key)[2]) if kind == "lemonade" else []
+    shown_ids = ", ".join(ids[:8]) + (f" and {len(ids) - 8} more" if len(ids) > 8 else "")
+    chosen = match_model(model, ids) if model else None
+    label = ""
+    if model and not chosen and not model_is_label:
+        yield Check("server", "FAIL", f"{at} doesn't list the model {model}; it lists {shown_ids}: pass the id it "
+                                      "lists")
+        yield from skipped
+        return
+    if not chosen:
+        if len(ids) == 1 or len(loaded_names) == 1:  # Lemonade lists every model it has downloaded
+            chosen = ids[0] if len(ids) == 1 else loaded_names[0]
+            label = f" (--model {model} is the leg's label, not an id it lists)" if model else ""
+        else:
+            fix = (f"none of them {model} (the leg's label): check the id the app uses with python "
+                   "tools/check_server.py --model <id>" if model else "pass --model to say which one the agent uses")
+            yield Check("server", "FAIL", f"{at} lists {len(ids)} models ({shown_ids}): {fix}")
+            yield from skipped
+            return
     loaded = None
     if kind == "lemonade":
-        loaded, loaded_names = lemonade_loaded(base, chosen)
+        loaded, loaded_names, _ = lemonade_loaded(base, chosen, key)
         if not loaded:
             now = ", ".join(loaded_names) or "none"
-            return [Check("server", "FAIL", f"Lemonade at {base} has {chosen} but hasn't loaded it (loaded: {now}); "
-                                            f"this check loads nothing: lemonade load {chosen} --ctx-size 65536")] + skipped
-    return [Check("server", "ok", f"{base}, {kind or 'an OpenAI-compatible server'}, model {chosen}"),
-            check_context(kind, base, chosen, entries[chosen], loaded),
-            check_tool_call(kind, base, chosen, key),
-            check_metrics(kind, base, loaded, need_metrics)]
+            yield Check("server", "FAIL", f"Lemonade at {at} has {chosen} but hasn't loaded it (loaded: {now}); "
+                                          f"this check loads nothing: lemonade load {chosen} --ctx-size 65536")
+            yield from skipped
+            return
+    yield Check("server", "ok", f"{at}, {kind or 'an OpenAI-compatible server'}, model {chosen}{label}")
+    yield check_context(kind, base, chosen, entries[chosen], loaded)
+    yield check_tool_call(kind, base, chosen, key)
+    yield check_metrics(kind, base, loaded, need_metrics)
 
 
 def failed(checks: List[Check]) -> List[Check]:
@@ -324,9 +386,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--model", help="the model id the agent asks for (default: the one model the server lists)")
     args = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
-    checks = run_checks(args.base_url, args.model)
-    for c in checks:
-        print(c.line(), flush=True)
+    checks = run_checks(args.base_url, args.model, report=lambda c: print(c.line(), flush=True))
     bad = failed(checks)
     print(f"{'result:'.ljust(11)} " + (f"{len(bad)} check(s) failed" if bad else "ready for a run"))
     return 1 if bad else 0
