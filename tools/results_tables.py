@@ -656,6 +656,7 @@ def charts(exps: List[dict], out_dir: Path) -> List[Path]:
                             color=INK if col == AGREE_COLOURS[1] else "white")
                 left += c
             ax.set_xlim(0, n)
+            ax.xaxis.get_major_locator().set_params(integer=True)  # whole tasks: no 0.5 tick
             ax.set_yticks([])
             ax.spines["left"].set_visible(False)
             ax.set_xlabel("tasks")
