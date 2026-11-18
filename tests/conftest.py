@@ -48,6 +48,16 @@ def _no_real_process_listing(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_model_server(monkeypatch):
+    """Every run reads the model server's settings before each task (processes, then /props): never for real here.
+    A test of that reading calls tests.test_telemetry's REAL_SETTINGS."""
+    import telemetry
+
+    monkeypatch.setattr(telemetry, "settings_block", lambda read="before the task", servers=None, probe_ports=True: {
+        "read": read, "servers": [], "reason": "no model server (tests)"})
+
+
+@pytest.fixture(autouse=True)
 def _no_real_agent_python_check(monkeypatch):
     """Under Layer 4 the runner checks, through icacls or the agent user's sudo rule, that the agent user can't change
     the checkers' Python: never for real here. A test of that check calls tests.test_isolation's REAL_CHECK."""
