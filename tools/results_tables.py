@@ -702,18 +702,20 @@ def charts(exps: List[dict], out_dir: Path) -> List[Path]:
 
         totals = [sum(e["tasks"][t]["wall_s"] for t in tids if _num(e["tasks"][t].get("wall_s"))) for e in exps]
         hours = max(totals) >= 7200
-        fig, ax = plt.subplots(figsize=(6.4, 3.4))
+        per_row = 2 if max(len(e["label"]) for e in exps) > 24 else 3  # a legend, not labels that can overlap
+        rows = -(-len(exps) // per_row)
+        fig, ax = plt.subplots(figsize=(6.4, 3.2 + 0.22 * rows))
         for i, e in enumerate(exps):
-            x = totals[i] / (3600 if hours else 60)
-            ax.scatter(x, passes[i], s=70, color=colour[i], edgecolors="white", linewidths=2, zorder=3)
-            ax.annotate(e["label"], (x, passes[i]), xytext=(7, -3), textcoords="offset points", fontsize=8)
-        ax.set_xlim(0, max(1e-9, max(totals) / (3600 if hours else 60)) * 1.35)
+            ax.scatter(totals[i] / (3600 if hours else 60), passes[i], s=70, color=colour[i], edgecolors="white",
+                       linewidths=1.5, zorder=3, label=f"{e['label']} ({passes[i]})")
+        ax.set_xlim(0, max(1e-9, max(totals) / (3600 if hours else 60)) * 1.15)
         ax.set_ylim(0, n * 1.08)
         ax.set_xlabel(f"total time on these tasks ({'hours' if hours else 'minutes'})")
         ax.set_ylabel(f"tasks passed (of {n})")
         ax.set_title(f"Total time against tasks passed ({n} tasks; up and left is better)")
         ax.grid(color="#e5e5e5", zorder=0)
-        fig.tight_layout()
+        fig.legend(frameon=False, ncols=per_row, loc="lower center", fontsize=8)
+        fig.tight_layout(rect=(0, 0.02 + 0.075 * rows, 1, 1))
         written.append(out_dir / CHART_FILES[3])
         _save(plt, fig, written[-1])
     return written
