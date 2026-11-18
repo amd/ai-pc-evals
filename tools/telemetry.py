@@ -910,9 +910,24 @@ def line(block: Dict[str, Any]) -> str:
     return "telemetry: " + ", ".join(bits) + (f" ({'; '.join(notes)})" if notes else "")
 
 
+def _seconds(argv: List[str]) -> Optional[float]:
+    """``[SECONDS]`` from the command line (default 5); None for anything else (``--help``, a second argument)."""
+    if not argv:
+        return 5.0
+    try:
+        value = float(argv[0])
+    except ValueError:
+        return None
+    return value if len(argv) == 1 and value >= 0 else None
+
+
 if __name__ == "__main__":
+    wait = _seconds(sys.argv[1:])
+    if wait is None:
+        print("usage: python tools/telemetry.py [SECONDS]   # sample for SECONDS (default 5) and print the block")
+        sys.exit(0 if sys.argv[1:2] in (["-h"], ["--help"]) else 2)
     tel = Telemetry().start()
-    time.sleep(float(sys.argv[1]) if len(sys.argv) > 1 else 5)
+    time.sleep(wait)
     result = tel.stop()
     print(json.dumps(result, indent=1))
     print(line(result))
