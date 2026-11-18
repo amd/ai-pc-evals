@@ -423,3 +423,41 @@ def test_no_slots_endpoint_is_a_reason_not_a_crash(monkeypatch):
     w.stop()
     assert "doesn't answer /slots" in telemetry.context_block(LLAMA, None, "x", w)["reason"]
     assert "doesn't report each request" in telemetry.context_block({"kind": "vllm"}, 8192, None, None)["reason"]
+
+
+# ----------------------------------------------------------------- review fixes
+def test_a_pi_compaction_that_failed_but_the_run_got_past_is_not_the_runs_failure():
+    """The task is graded on the reply it gave, as in text mode; a compaction error with no reply after it fails."""
+    failed = json.dumps({"type": "compaction_end", "errorMessage": "Compaction failed: summary request timed out"})
+    reply = json.dumps({"type": "message_end", "message": {"role": "assistant", "stopReason": "stop",
+                                                            "content": [{"type": "text", "text": "4127"}]}})
+    t = T.parse("pi", failed + "\n" + reply + "\n")
+    assert t.answer == "4127" and not t.failure and t.compactions == 0
+    t = T.parse("pi", failed + "\n")
+    assert t.failure == "Compaction failed: summary request timed out" and not t.answer
+
+
+def test_a_secret_in_a_tool_call_is_scrubbed_from_the_console_line_result_json_and_summary(tmp_path, monkeypatch,
+                                                                                             capsys):
+    from agents.base import Agent, AgentResult
+
+    secret = "sk-test-0123456789abcdefghijklmnop"
+    monkeypatch.setenv("KW_TEST_API_KEY", secret)
+
+    class Fake(Agent):
+        name = "fake"
+
+        def run(self, task, log_dir):
+            t = T.Trace("pi", calls=[T.Call("bash", {"command": f"echo {secret}"})], events=1)
+            return AgentResult(answer="", wall_seconds=3.0, model="m", timed_out=True, error="stopped at the 3s time cap",
+                               extra={"tool_health": T.tool_health(t, timed_out=True), "context": T.context(t)})
+
+    monkeypatch.setattr(run_eval, "EVAL_HOME", tmp_path / "home")
+    monkeypatch.setattr(run_eval, "get_agent", lambda name, model: Fake("m"))
+    run_dir = run_eval.run("fake", "m", "verify", ["verify-02"], tmp_path / "out", tmp_path / "fx", "m",
+                           do_grade=False, measure=False)
+    out = capsys.readouterr().out
+    assert "verify-02: last call before the cap: bash" in out and secret not in out
+    result = (run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8")
+    assert "last call before the cap" not in result and secret not in result
+    assert json.loads(result)["tool_health"]["last_call"].startswith("bash ")

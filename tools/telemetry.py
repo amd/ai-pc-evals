@@ -1041,16 +1041,33 @@ def fields(block: Dict[str, Any]) -> List[Tuple[str, str]]:
     if f.get("reason"):
         out.append(("gpu faults", "n/a"))
     elif any(f.get(k) for k in FAULT_KINDS):
-        out.append(("gpu faults", ", ".join(f"{f[k]} {k.replace('_', ' ')}" for k in FAULT_KINDS if f.get(k))))
+        names = {k: k.replace("_", " ") for k in FAULT_KINDS}  # as line() says them: "1 reset", "2 resets"
+        out.append(("gpu faults", ", ".join(f"{f[k]} {names[k].rstrip('s') if f[k] == 1 else names[k]}"
+                                            for k in FAULT_KINDS if f.get(k))))
     notes = [r for r in (s.get("reason"), g.get("reason"), f.get("reason")) if r]
     if notes:
         out.append(("telemetry", "; ".join(notes)))
     return out
 
 
+def _seconds(argv: List[str]) -> Optional[float]:
+    """``[SECONDS]`` from the command line (default 5); None for anything else (``--help``, a second argument)."""
+    if not argv:
+        return 5.0
+    try:
+        value = float(argv[0])
+    except ValueError:
+        return None
+    return value if len(argv) == 1 and value >= 0 else None
+
+
 if __name__ == "__main__":
+    wait = _seconds(sys.argv[1:])
+    if wait is None:
+        print("usage: python tools/telemetry.py [SECONDS]   # sample for SECONDS (default 5) and print the block")
+        sys.exit(0 if sys.argv[1:2] in (["-h"], ["--help"]) else 2)
     tel = Telemetry().start()
-    time.sleep(float(sys.argv[1]) if len(sys.argv) > 1 else 5)
+    time.sleep(wait)
     result = tel.stop()
     print(json.dumps(result, indent=1))
     print(line(result))

@@ -181,6 +181,7 @@ def _pi(stdout: str) -> Trace:
     t = Trace("pi")
     calls: Dict[str, Call] = {}
     last: Optional[Dict[str, Any]] = None
+    compaction_error = ""
     for ev in _lines(stdout):
         t.events += 1
         kind = ev.get("type")
@@ -211,14 +212,18 @@ def _pi(stdout: str) -> Trace:
                     call.result = _text(m.get("content"))
         elif kind == "compaction_end":
             if ev.get("errorMessage"):
-                t.failure = str(ev["errorMessage"])[:300]
+                compaction_error = " ".join(str(ev["errorMessage"]).split())[:300]
             elif not ev.get("aborted"):
                 t.compactions += 1
     if last is not None:
         t.answer = _text([c for c in last.get("content") or [] if isinstance(c, dict) and c.get("type") == "text"])
         if last.get("stopReason") in ("error", "aborted"):  # `pi -p` exits 1 with nothing on stdout here
             t.answer = ""
-            t.failure = t.failure or " ".join(str(last.get("errorMessage") or last["stopReason"]).split())[:300]
+            t.failure = compaction_error or " ".join(str(last.get("errorMessage") or last["stopReason"]).split())[:300]
+    # A failed compaction the run got past (its last message answered) is not the run's failure: the task is graded
+    # on its reply, as in text mode. One it didn't get past is.
+    if compaction_error and not t.failure and not (t.answer or "").strip():
+        t.failure = compaction_error
     return t
 
 
