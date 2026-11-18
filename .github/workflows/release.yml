@@ -33,10 +33,12 @@ jobs:
     uses: ./.github/workflows/lint.yml
 
   # These two use the answers environment (its KW_ANSWERS_PASSPHRASE secret), which must allow v* tags as well as
-  # main. The environment hands the called jobs its secret itself: nothing is passed from here.
+  # main. A called workflow gets an environment secret only when the caller passes it: hence secrets: inherit
+  # (without it the secret is silently empty, and v0.7.1's first release run skipped every probe test).
   probes:
     needs: version
     uses: ./.github/workflows/probes.yml
+    secrets: inherit
 
   # issues: write only because the called workflow's weekly report job declares it, and a called job can't ask for
   # more than its caller grants. That job runs on the weekly schedule (or by hand) only, so here it is skipped and
@@ -44,6 +46,7 @@ jobs:
   sources:
     needs: version
     uses: ./.github/workflows/sources.yml
+    secrets: inherit
     permissions:
       contents: read
       issues: write

@@ -138,3 +138,30 @@ def test_the_default_tests_are_the_ones_that_skip_without_the_answers():
     for test in ci_probe_tests.DESELECT:
         file, func = test.split("::")
         assert f"def {func}(" in (REPO / file).read_text(encoding="utf-8"), test
+
+
+def test_release_passes_the_answers_secret_to_every_workflow_that_needs_it():
+    """A called workflow gets an environment secret only if its caller passes it; otherwise it is silently empty
+    (v0.7.1's first release run skipped every probe test). release.yml passes it, and an empty secret can't pass
+    unnoticed: either the workflow requires it when called (allowed only when every job is in the answers
+    environment, since GitHub checks a required secret for every job: v0.7.1's second run failed on sources.yml's
+    drift job), or every step that reads it fails on an empty value."""
+    release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        if path.name == "release.yml" or "secrets.KW_ANSWERS_PASSPHRASE" not in text or "workflow_call" not in text:
+            continue
+        call = re.search(rf"uses: \./\.github/workflows/{re.escape(path.name)}\n((?:    .*\n)*)", release)
+        assert call and "secrets: inherit" in call.group(1), f"release.yml must pass secrets to {path.name}"
+        blocks = jobs(path)
+        required = re.search(r"workflow_call:.*?\n\s+secrets:.*?\n\s+KW_ANSWERS_PASSPHRASE:\s*\n\s+required: true", text,
+                             re.S)
+        if required:
+            outside = [job for job, block in blocks.items() if not re.search(r"^    environment: answers\s*$", block, re.M)]
+            assert not outside, f"{path.name}: requires the secret, but {outside} run outside the answers environment"
+        else:
+            for job, block in blocks.items():
+                for step in re.split(r"\n      - ", block):
+                    if "secrets.KW_ANSWERS_PASSPHRASE" in step:
+                        assert '-z "$KW_ANSWERS_PASSPHRASE"' in step, (
+                            f"{path.name}:{job}: a step reading the secret must fail when it is empty")
