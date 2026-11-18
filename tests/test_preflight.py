@@ -70,6 +70,9 @@ def test_a_python_virtual_environment_of_any_name_is_not_swept(env):
     assert bundle in failed_paths(run(env))
     (venv / "bin").mkdir()
     (venv / "bin" / "python3").write_text("", encoding="utf-8")
+    # Nor does an empty file named python3: anyone can drop one to hide bin/, lib/ and share/ from the sweep.
+    assert bundle in failed_paths(run(env))
+    (venv / "bin" / "python3").write_bytes(b"\x7fELF stands in for a real interpreter")
     assert bundle not in failed_paths(run(env))
     # Only its package folders are skipped: a copy anywhere else in it is still found.
     beside = venv / "notes" / "key.json"

@@ -22,7 +22,7 @@ import json
 import shlex
 import subprocess
 import sys
-from pathlib import PureWindowsPath
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional, Sequence
 
 #: Process name (lowercase, no .exe) -> kind of server.
@@ -187,4 +187,17 @@ def label(server: Dict[str, Any]) -> str:
 
 
 if __name__ == "__main__":
-    print(json.dumps({"servers": list_servers(), "memory": memory()}, indent=1))
+    found, mem = list_servers(), memory()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import console  # noqa: E402
+
+    if console.for_terminal():  # one line per server; JSON for a pipe or a script
+        print()
+        for s in found:
+            print(console.kv("server", label(s), indent=""))
+        if not found:
+            print(console.kv("server", "none running", indent=""))
+        if mem:
+            print(console.kv("memory", f"{mem['free_gb']} GB free of {mem['total_gb']} GB", indent=""))
+    else:
+        print(json.dumps({"servers": found, "memory": mem}, indent=1))
