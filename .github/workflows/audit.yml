@@ -15,6 +15,7 @@ on:
       - "constraints.txt"
       - ".github/workflows/audit.yml"
   workflow_dispatch:
+  workflow_call:  # release.yml: a tag publishes only if the audit is clean (the issue is the weekly run's alone)
 
 permissions:
   contents: read

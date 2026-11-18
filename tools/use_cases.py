@@ -114,6 +114,10 @@ def render() -> str:
 
 
 def main(argv: list[str]) -> int:
+    if any(a != "--check" for a in argv):
+        # Never write USE_CASES.md for an argument it doesn't know (`--help` used to rewrite it).
+        print(__doc__.strip())
+        return 0 if all(a in ("-h", "--help", "--check") for a in argv) else 2
     text = render()
     if "--check" in argv:
         current = OUT.read_text(encoding="utf-8") if OUT.is_file() else ""

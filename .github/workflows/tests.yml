@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:  # release.yml runs these same jobs on a tag before it publishes
 
 permissions:
   contents: read
@@ -37,7 +38,7 @@ jobs:
       - name: Shell syntax
         shell: bash
         run: for f in $(git ls-files '*.sh'); do bash -n "$f"; done
-      - run: python -m pytest -q
+      - run: python -m pytest -q -rs  # -rs: every skip and its reason, in the log
 
   # Linux Layer 4 for real (#59): agents and probes as a separate user through sudo, POSIX ACLs, the sticky bit,
   # and cron and timer containment, which the pytest job covers only with mocks. GitHub's Ubuntu runners have
@@ -54,6 +55,10 @@ jobs:
           python-version: "3.13"
       - name: System packages (ACLs, cron, the user bus for systemctl --user)
         run: sudo apt-get update -q && sudo apt-get install -y -q acl cron dbus-user-session python3-venv
+      # GitHub's runners leave /opt writable by every user, so the agent user could replace the checkers' Python in
+      # it (the setup script checks this and stops); an eval box's /opt is root's, 755.
+      - name: Make /opt root's only, as on an eval box
+        run: sudo chmod o-w /opt
       - name: Set up the agent user as docs/ISOLATION.md says
         run: bash tools/setup_layer4_linux.sh
       - name: A systemd user manager for you and for the agent user (their timers)

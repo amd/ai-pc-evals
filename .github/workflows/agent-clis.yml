@@ -14,6 +14,7 @@ on:
       - "tools/check_agent_flags.py"
       - ".github/workflows/agent-clis.yml"
   workflow_dispatch:
+  workflow_call:  # release.yml: a tag publishes only if the flags match (the issue is the weekly run's alone)
 
 permissions:
   contents: read
