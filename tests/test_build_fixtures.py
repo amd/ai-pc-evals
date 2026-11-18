@@ -289,3 +289,15 @@ def test_generated_pdfs_hold_no_deflated_streams(tmp_path):
     data = receipt.read_bytes()
     assert b"/FlateDecode" not in data and b"Room charge  $151.00" in data  # the text, in the clear
     assert set(re.findall(rb"/Filter\s*/(\w+)", scan.read_bytes())) == {b"DCTDecode"}  # JPEG pages
+
+
+def test_generated_pdfs_never_call_zlib(tmp_path, monkeypatch):
+    # The same, from the other side: building them never deflates anything, so no zlib build can change them.
+    import zlib
+
+    def deflate(*a, **k):
+        raise AssertionError("a generated PDF input was deflated")
+    monkeypatch.setattr(zlib, "compress", deflate)
+    monkeypatch.setattr(zlib, "compressobj", deflate)
+    bf._receipt_pdf(tmp_path / "r.pdf", "Guest folio", ["2026-05-04  Room charge  $151.00"])
+    bf._scan_pages(tmp_path / "scan.pdf")
