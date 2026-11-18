@@ -978,28 +978,185 @@ def test_the_vision_pass_skips_a_task_retired_from_the_suite(tmp_path, monkeypat
     assert "pc-99-retired: vision skipped: no longer a task of the portable suite" in capsys.readouterr().out
 
 
-def test_a_regrade_names_the_task_it_cannot_rebuild(tmp_path, monkeypatch):
-    run = tmp_path / "run"
-    run.mkdir()
+def _regrade_fixture(tmp_path, monkeypatch, old=None):
+    """A portable run with pc-01 and pc-10 recorded (pc-04 prepared, never recorded), graded into *tmp_path*;
+    returns (run folder, the ids each build got, the --tasks each grade got)."""
+    run = tmp_path / "runs" / "leg" / "r1"
+    run.mkdir(parents=True)
     (run / "kw-run.json").write_text(json.dumps({"suite": "portable", "tasks": {"pc-01-halo-pm-report": {}, "pc-10": {},
                                                                               "pc-04": {}}}))
     for tid in ("pc-01-halo-pm-report", "pc-10"):  # pc-04 was never recorded: its inputs aren't rebuilt
         (run / ".records" / tid).mkdir(parents=True)
-        (run / ".records" / tid / "result.json").write_text("{}")
-    built = []
+        (run / ".records" / tid / "result.json").write_text(json.dumps({"harness": "claude-code"}))
+    monkeypatch.setenv("KW_GRADED_HOME", str(tmp_path / "graded"))
+    graded = run_eval.graded_dir(run)
+    graded.mkdir(parents=True)
+    if old:
+        (graded / "scorecard.json").write_text(json.dumps({"judge_model": "m", "tasks": old}))
+    monkeypatch.setattr(run_eval, "check_turns", lambda d: [])
+    monkeypatch.setattr(run_eval, "inputs_drift", lambda run_dir, suite, ids, fixtures: {})
+    monkeypatch.setattr(run_eval, "missing_psutil", lambda: None)
+    built, graded_tasks = [], []
+
+    def grade(run_dir, suite, fixtures, judge_model, only=None, with_runs=()):  # what grade --tasks leaves
+        from kwengine.grade import merge_cards
+
+        graded_tasks.append(only)
+        card_file = graded / "scorecard.json"
+        new = {"judge_model": "m", "harness": "claude-code", "model": "m", "suite": "portable", "axes": [],
+               "tasks": [_card_entry(t, True) for t in (only or ["pc-01-halo-pm-report", "pc-10"]) if t != "pc-04"],
+               "unrecorded": []}
+        if only:  # kwengine grade --tasks merges into the earlier card in the graded folder (--card-dir)
+            old = json.loads(card_file.read_text(encoding="utf-8")) if card_file.is_file() else None
+            new = merge_cards(old, new, ["pc-01-halo-pm-report", "pc-10", "pc-04"], ["pc-01-halo-pm-report", "pc-10"])
+        card_file.write_text(json.dumps(new))
+    monkeypatch.setattr(run_eval, "grade", grade)
+    monkeypatch.setattr(run_eval, "build", lambda ids, *a: built.extend(ids))
+    return run, built, graded_tasks
+
+
+def _card_entry(tid, passed):
+    return {"id": tid, "passed": passed, "input_tokens": 0, "output_tokens": 0, "cost_source": "", "wall_seconds": 1.0}
+
+
+def test_grade_only_leaves_out_the_excluded_tasks(tmp_path, monkeypatch):
+    run, built, graded_tasks = _regrade_fixture(tmp_path, monkeypatch, old=[_card_entry("pc-01-halo-pm-report", False),
+                                                                            _card_entry("pc-10", False)])
+    assert run_eval.main(["--grade-only", str(run), "--exclude", "pc-1*", "--fixtures-root", str(tmp_path)]) == 0
+    assert built == ["pc-01-halo-pm-report"] and graded_tasks == [["pc-01-halo-pm-report", "pc-04"]]
+    card = json.loads((run_eval.graded_dir(run) / "scorecard.json").read_text(encoding="utf-8"))
+    # pc-10 keeps the grade it had: excluded, as with --tasks naming only the others
+    assert [(t["id"], t["passed"]) for t in card["tasks"]] == [("pc-01-halo-pm-report", True), ("pc-10", False)]
+    assert card["regraded"] == ["pc-01-halo-pm-report"]
+    built.clear()
+    run_eval.regrade(run, tmp_path, "m", patterns="pc-0*", exclude="pc-04")  # with --tasks: both apply
+    assert built == ["pc-01-halo-pm-report"] and graded_tasks[-1] == ["pc-01-halo-pm-report"]
+    with pytest.raises(run_eval.EvalError, match="--exclude kw-\\* matches no task"):  # a typo isn't a full regrade
+        run_eval.regrade(run, tmp_path, "m", exclude="kw-*")
+    with pytest.raises(run_eval.EvalError, match="no chosen task is recorded"):
+        run_eval.regrade(run, tmp_path, "m", exclude="pc-01-*,pc-10")
+
+
+def test_a_regrade_grades_the_rest_when_one_task_cannot_be_rebuilt(tmp_path, monkeypatch, capsys):
+    run, built, graded_tasks = _regrade_fixture(tmp_path, monkeypatch, old=[_card_entry("pc-01-halo-pm-report", True)])
 
     def build(ids, *a):
         built.extend(ids)
         if ids == ["pc-01-halo-pm-report"]:
             raise run_eval.EvalError("exited 1:\nERROR: snapshot pack P is not ready on this machine")
     monkeypatch.setattr(run_eval, "build", build)
-    with pytest.raises(run_eval.EvalError, match="can't re-grade: pc-01-halo-pm-report: snapshot pack P is not ready"):
+    assert run_eval.main(["--grade-only", str(run), "--fixtures-root", str(tmp_path)]) == 1  # a script notices
+    out = capsys.readouterr().out
+    assert "not graded: pc-01-halo-pm-report: inputs could not be rebuilt: snapshot pack P is not ready" in out
+    assert "pc-04" not in built and graded_tasks == [["pc-10", "pc-04"]]
+    card = json.loads((run_eval.graded_dir(run) / "scorecard.json").read_text(encoding="utf-8"))
+    # its earlier grade is not passed off as current: it is listed as not graded, with why
+    assert [t["id"] for t in card["tasks"]] == ["pc-10"] and card["not_graded"] == ["pc-01-halo-pm-report"]
+    summary = (run_eval.graded_dir(run) / "summary.md").read_text(encoding="utf-8")
+    assert ("Recorded but not graded yet" in summary and "- pc-01-halo-pm-report: inputs could not be rebuilt: "
+            "snapshot pack P is not ready on this machine" in summary)
+    assert card["answer_sets"]["public"] == 1 and card["cost"]["tokens"] == 0  # worked out from what is left
+    # the full error goes beside summary.md, never into the run folder, where the agent user may have planted a link
+    errors = run_eval.graded_dir(run) / "build-errors" / "pc-01-halo-pm-report.txt"
+    assert "snapshot pack P" in errors.read_text(encoding="utf-8") and not (run / "build-errors").exists()
+    # inputs that build but no longer match what the agent got: the same, and with none left, nothing is graded
+    monkeypatch.setattr(run_eval, "inputs_drift", lambda run_dir, suite, ids, fixtures: {
+        t: f"task {t!r}: its inputs no longer rebuild to what the agent was given" for t in ids})
+    with pytest.raises(run_eval.EvalError, match="no chosen task's inputs could be rebuilt"):
         run_eval.regrade(run, tmp_path, "m")
-    assert "pc-04" not in built
+    assert "not graded: pc-10: inputs could not be rebuilt: task 'pc-10': its inputs no longer rebuild" in \
+        capsys.readouterr().out
+    assert len(graded_tasks) == 1
     with pytest.raises(run_eval.EvalError, match="no chosen task is recorded"):
         run_eval.regrade(run, tmp_path, "m", patterns="pc-04")
     with pytest.raises(run_eval.EvalError, match="matches no task"):
         run_eval.regrade(run, tmp_path, "m", patterns="kw-*")
+
+
+def test_a_regrade_of_several_legs_leaves_a_task_out_of_each_with_its_own_reason(tmp_path, monkeypatch, capsys):
+    # The legs are judged together on one task list: a task one leg can't rebuild is left out of every leg, and
+    # each says why in its own words, never another leg's reason as its own.
+    monkeypatch.setenv("KW_GRADED_HOME", str(tmp_path / "graded"))
+    runs = []
+    for leg in ("leg-a", "leg-b"):
+        run = tmp_path / "runs" / leg / "r1"
+        (run / ".records").mkdir(parents=True)
+        (run / "kw-run.json").write_text(json.dumps({"suite": "portable", "tasks": {"pc-01": {}, "pc-10": {}}}))
+        for tid in ("pc-01", "pc-10"):
+            (run / ".records" / tid).mkdir()
+            (run / ".records" / tid / "result.json").write_text(json.dumps({"harness": "claude-code"}))
+        run_eval.graded_dir(run).mkdir(parents=True)
+        (run_eval.graded_dir(run) / "scorecard.json").write_text(
+            json.dumps({"tasks": [_card_entry("pc-01", True), _card_entry("pc-10", True)]}))
+        runs.append(run)
+    monkeypatch.setattr(run_eval, "check_turns", lambda d: [])
+    monkeypatch.setattr(run_eval, "build", lambda ids, *a: None)
+    monkeypatch.setattr(run_eval, "inputs_drift", lambda run_dir, suite, ids, fixtures: (
+        {"pc-01": "task 'pc-01': its inputs no longer rebuild"} if run_dir.parent.name == "leg-a" else {}))
+    calls = []
+
+    def grade(run_dir, suite, fixtures, judge_model, only=None, with_runs=()):
+        from kwengine.grade import merge_cards
+
+        calls.append((only, list(with_runs)))
+        for d in [run_dir, *with_runs]:
+            card_file = run_eval.graded_dir(d) / "scorecard.json"
+            new = {"harness": "claude-code", "model": "m", "suite": "portable", "axes": [], "unrecorded": [],
+                   "tasks": [_card_entry(t, False) for t in only]}
+            card_file.write_text(json.dumps(merge_cards(json.loads(card_file.read_text()), new, ["pc-01", "pc-10"],
+                                                        ["pc-01", "pc-10"])))
+    monkeypatch.setattr(run_eval, "grade", grade)
+    _, not_graded = run_eval.regrade(runs, tmp_path, "m")
+    assert calls == [(["pc-10"], [runs[1]])] and set(not_graded) == {"pc-01"}
+    out = capsys.readouterr().out
+    assert "not graded: pc-01: inputs could not be rebuilt: task 'pc-01': its inputs no longer rebuild (leg-a/r1)" in out
+    assert "not graded: pc-01: left out with the other legs: its inputs could not be rebuilt in leg-a/r1 (leg-b/r1)" in out
+    for run, why in zip(runs, ("inputs could not be rebuilt: task 'pc-01'", "left out with the other legs")):
+        card = json.loads((run_eval.graded_dir(run) / "scorecard.json").read_text(encoding="utf-8"))
+        assert [(t["id"], t["passed"]) for t in card["tasks"]] == [("pc-10", False)]
+        assert card["not_graded"] == ["pc-01"] and card["not_graded_why"]["pc-01"].startswith(why)
+    # legs that prepared different tasks share no one task list to leave it out of: one at a time, then
+    (runs[1] / "kw-run.json").write_text(json.dumps({"suite": "portable", "tasks": {"pc-01": {}, "pc-10": {}, "pc-04": {}}}))
+    with pytest.raises(run_eval.EvalError, match="prepared different tasks"):
+        run_eval.regrade(runs, tmp_path, "m")
+    assert len(calls) == 1
+
+
+def test_a_regrade_never_grades_a_task_whose_inputs_changed(tmp_path, monkeypatch):
+    # Leaving a task out before grading doesn't stand in for the engine's own check: kwengine grade still compares
+    # every task it grades with its baseline, so a change it finds there still stops grading.
+    run, _, _ = _regrade_fixture(tmp_path, monkeypatch)
+
+    def grade(*a, **k):
+        raise run_eval.EvalError("kwengine grade: task 'pc-10': its inputs no longer rebuild to what the agent was given")
+    monkeypatch.setattr(run_eval, "grade", grade)
+    with pytest.raises(run_eval.EvalError, match="no longer rebuild"):
+        run_eval.regrade(run, tmp_path, "m")
+
+
+def test_inputs_drift_is_the_check_grading_makes(tmp_path, monkeypatch):
+    # A real warm-up run, prepared and recorded: its inputs rebuild; once its baseline says otherwise, they don't.
+    from agents.base import Agent, AgentResult
+
+    class Fake(Agent):
+        name = "fake"
+
+        def run(self, task, log_dir):
+            return AgentResult(answer="done", wall_seconds=1.0, model="m")
+    monkeypatch.setattr(run_eval, "EVAL_HOME", tmp_path / "home")
+    monkeypatch.setattr(run_eval, "get_agent", lambda name, model: Fake("m"))
+    monkeypatch.setattr(run_eval.isolation, "agent_user", lambda env=None: "")
+    fx = tmp_path / "fx"
+    run_dir = run_eval.run("fake", "m", "verify", None, tmp_path / "out", fx, "m", do_grade=False,
+                           include_unsupported=True)
+    ids = ["verify-01", "verify-02"]
+    assert run_eval.inputs_drift(run_dir, "verify", ids, fx) == {}
+    base = run_dir / ".baseline" / "verify-02.json"
+    data = json.loads(base.read_text(encoding="utf-8"))
+    data["files"]["build_times.csv"] = "0" * 64
+    base.write_text(json.dumps(data), encoding="utf-8")
+    drift = run_eval.inputs_drift(run_dir, "verify", ids, fx)
+    assert list(drift) == ["verify-02"] and "no longer rebuild" in drift["verify-02"]
 
 
 def test_audit_flags_reading_an_earlier_graded_run(tmp_path):
