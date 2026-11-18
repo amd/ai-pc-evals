@@ -138,3 +138,18 @@ def test_the_default_tests_are_the_ones_that_skip_without_the_answers():
     for test in ci_probe_tests.DESELECT:
         file, func = test.split("::")
         assert f"def {func}(" in (REPO / file).read_text(encoding="utf-8"), test
+
+
+def test_release_passes_the_answers_secret_to_every_workflow_that_needs_it():
+    """A called workflow gets an environment secret only if its caller passes it; otherwise it is silently empty
+    (v0.7.1's first release run skipped every probe test). Each workflow that reads the passphrase requires it
+    when called, and release.yml passes it."""
+    release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        if path.name == "release.yml" or "secrets.KW_ANSWERS_PASSPHRASE" not in text or "workflow_call" not in text:
+            continue
+        assert re.search(r"workflow_call:.*?\n\s+secrets:.*?\n\s+KW_ANSWERS_PASSPHRASE:\s*\n\s+required: true", text,
+                         re.S), f"{path.name}: declare KW_ANSWERS_PASSPHRASE as a required workflow_call secret"
+        call = re.search(rf"uses: \./\.github/workflows/{re.escape(path.name)}\n((?:    .*\n)*)", release)
+        assert call and "secrets: inherit" in call.group(1), f"release.yml must pass secrets to {path.name}"

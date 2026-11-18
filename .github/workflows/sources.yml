@@ -11,6 +11,9 @@ on:
     - cron: "23 5 * * 1"  # Mondays 05:23 UTC
   workflow_dispatch:
   workflow_call:  # release.yml: a tag publishes only if this passes (the issue is filed by the weekly run only)
+    secrets:  # a caller must pass it (release.yml: secrets: inherit); missing, the run fails rather than skips
+      KW_ANSWERS_PASSPHRASE:
+        required: true
 
 permissions:
   contents: read
