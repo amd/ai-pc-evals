@@ -294,6 +294,17 @@ def linux(monkeypatch):
     monkeypatch.setattr(isolation, "WINDOWS", False)
     monkeypatch.setattr(schedules.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(schedules, "_user_manager", lambda user: "/run/user/1000")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")  # a runner with a session environment
+
+
+def test_a_runner_without_a_session_environment_still_reaches_its_user_manager(monkeypatch):
+    # From cron or a bare ssh command there is no XDG_RUNTIME_DIR: every systemctl --user listing would fail, and
+    # containment would be off for the whole run (#55).
+    monkeypatch.setattr(isolation, "WINDOWS", False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    assert schedules._systemctl("", "/run/user/1000", "list-timers")[:2] == ["env", "XDG_RUNTIME_DIR=/run/user/1000"]
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    assert schedules._systemctl("", "/run/user/1000", "list-timers") == ["systemctl", "--user", "list-timers"]
 
 
 def test_linux_a_new_cron_line_is_commented_out_and_a_new_timer_disabled(linux, monkeypatch):
