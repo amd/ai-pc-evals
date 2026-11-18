@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import console  # noqa: E402
+
 AGENTS = Path(__file__).resolve().parent / "agents" / "agents.json"
 HELP_TIMEOUT_S = 60
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -143,7 +146,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     rows = check(json.loads(args.agents.read_text(encoding="utf-8")), args.require_all)
     text = report(rows)
-    print(text, end="")
+    print(console.show(text), end="")  # plain text on a terminal; markdown for CI and pipes
     if args.report:
         args.report.write_text(text, encoding="utf-8")
     return 1 if any(r["failed"] for r in rows) else 0

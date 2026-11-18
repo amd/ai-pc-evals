@@ -43,6 +43,7 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compare  # noqa: E402
+import console  # noqa: E402
 import difficulty  # noqa: E402
 
 KW = Path(__file__).resolve().parents[1] / "knowledgework"
@@ -837,7 +838,7 @@ def main(argv=None) -> int:
     md = render(exps)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    print(md, end="")
+    print(console.show(md), end="")  # plain text on a terminal; the markdown itself for a pipe
     if args.out:
         with open(args.out, "w", encoding="utf-8", newline="\n") as f:
             f.write(md)

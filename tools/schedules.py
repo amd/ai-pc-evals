@@ -221,9 +221,11 @@ def snapshot(user: str = "") -> Optional[Set[str]]:
 
 def _systemctl(user: str, manager: str, *args: str) -> List[str]:
     """``systemctl --user`` for *user*'s manager. Through sudo the agent user has no session environment, so it
-    is told where its manager is (``XDG_RUNTIME_DIR``), as its own session would."""
+    is told where its manager is (``XDG_RUNTIME_DIR``), as its own session would. So is a runner started without
+    one (from cron, or a plain ``ssh host cmd`` on some systems): every listing would fail otherwise, and
+    containment would be off for the whole run."""
     cmd = ["systemctl", "--user", *args]
-    if user:
+    if user or not os.environ.get("XDG_RUNTIME_DIR"):
         cmd = ["env", f"XDG_RUNTIME_DIR={manager}", f"DBUS_SESSION_BUS_ADDRESS=unix:path={manager}/bus", *cmd]
     return _as(user, cmd)
 
