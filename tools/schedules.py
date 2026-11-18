@@ -672,8 +672,8 @@ def _details(name: str, user: str) -> Tuple[str, bool]:
     if kind in ("profile", "psprofile"):  # the line, so a program it starts with is where a command starts
         file = next((p for p in _ps_profiles() if what.startswith(p + ": ")), "") if kind == "psprofile" else ""
         return (what[len(file) + 2:] if file else what.split(": ", 1)[-1]), False
-    if kind == "run":
-        return what, False
+    if kind == "run":  # the command, not the value's name: a program it starts with is where a command starts
+        return what.partition(" = ")[2] or what, False
     if kind == "at":  # its script, without the environment at copies in (USER=, HOME=... name no program)
         script = _run(_as(user, ["sh", "-c", _SHOW_AT, "sh", what])) or ""
         return "\n".join(ln for ln in script.splitlines() if not _AT_ENV.match(ln)), False
@@ -700,12 +700,12 @@ _PROGRAM_EXT = r"(?:\.(?:exe|cmd|bat|ps1|js|mjs|cjs|sh))?"
 def _runs_tool(text: str, tool: str) -> bool:
     """*text* runs the program *tool* (lowercase), by name or by a path ending in it (/usr/bin/pi): with its own
     extension (pi.exe, \\npm\\pi.cmd), or where a command starts (a line; after ; & | ( $( or a backtick, a desktop
-    file's Exec=, a unit's ExecStart=, a registry value's " = ", nohup, exec, sudo, env, start or call). Not as a
-    folder (cd /home/pi, /opt/pi/update). A name of four
+    file's Exec=, a unit's ExecStart=, nohup, exec, sudo, env, start or call). Not as a folder (cd /home/pi,
+    /opt/pi/update), nor as another key's value (Name = Pi Monitor). A name of four
     letters or more also counts as any word of its own (claude, opencode); a shorter one (pi) is too common a word
     for that: "Raspberry Pi" names no agent."""
     t = rf"(?:[^\s\"';&|()=]*[\\/])?{re.escape(tool)}"  # the name, or a path ending in it
-    command = (r"(?:^|[;&|`]|(?:^|\s)\(|\$\(|\bexec\w*=|\s=|\b(?:nohup|exec|sudo|env|start|call)\s)\s*[\"']?")
+    command = (r"(?:^|[;&|`]|(?:^|\s)\(|\$\(|\bexec\w*\s*=|\b(?:nohup|exec|sudo|env|start|call)\s)\s*[\"']?")
     patterns = [rf"{command}{t}{_PROGRAM_EXT}{_PROGRAM_END}",
                 rf"(?:^|[\s\"'=])\s*{t}\.(?:exe|cmd|bat|ps1|js|mjs|cjs|sh){_PROGRAM_END}"]
     if len(tool) >= 4:
