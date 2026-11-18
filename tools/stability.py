@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import console  # noqa: E402
 import difficulty  # noqa: E402
 from compare import load  # noqa: E402
 
@@ -60,7 +61,7 @@ def render(runs: Sequence[dict], summary: Dict[str, dict]) -> str:
     order = {"flaky": 0, "stable-fail": 1, "not graded": 2, "stable-pass": 3}
     for tid, s in sorted(summary.items(), key=lambda kv: (order.get(kv[1]["status"], 2), kv[0])):
         q = "—" if s["quality_mean"] is None else f"{s['quality_mean']:.1f} ({s['quality_min']:.1f}–{s['quality_max']:.1f})"
-        why = s["worst_why"].replace("|", "/").replace("\n", " ")[:100]
+        why = console.clip(s["worst_why"].replace("|", "/").replace("\n", " "), 100)
         lines.append(f"| {tid} | {difficulty.level(tid) or '—'} | {s['status']} | {s['passed']}/{s['runs']} | {q} | {why} |")
     return "\n".join(lines) + "\n"
 
@@ -76,7 +77,7 @@ def main(argv=None) -> int:
         print(__doc__)
         return 2
     sys.stdout.reconfigure(encoding="utf-8")
-    print(report(args))
+    print(console.show(report(args)))  # plain text on a terminal; markdown for a pipe
     return 0
 
 
