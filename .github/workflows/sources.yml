@@ -10,10 +10,10 @@ on:
   schedule:
     - cron: "23 5 * * 1"  # Mondays 05:23 UTC
   workflow_dispatch:
-  workflow_call:  # release.yml: a tag publishes only if this passes (the issue is filed by the weekly run only)
-    secrets:  # a caller must pass it (release.yml: secrets: inherit); missing, the run fails rather than skips
-      KW_ANSWERS_PASSPHRASE:
-        required: true
+  # release.yml: a tag publishes only if this passes (the issue is filed by the weekly run only). The caller passes
+  # secrets (secrets: inherit). No `required: true` here: GitHub checks a required secret for every job, and `drift`
+  # deliberately runs outside the answers environment. The impact job fails on an empty secret instead.
+  workflow_call:
 
 permissions:
   contents: read
@@ -74,6 +74,10 @@ jobs:
           KW_ANSWERS_PASSPHRASE: ${{ secrets.KW_ANSWERS_PASSPHRASE }}
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
         run: |
+          if [ -z "$KW_ANSWERS_PASSPHRASE" ]; then
+            echo "::error::KW_ANSWERS_PASSPHRASE is empty: the answers environment must hold it, and a caller must pass secrets"
+            exit 1
+          fi
           echo "::add-mask::$KW_ANSWERS_PASSPHRASE"
           python tools/check_sources.py impact --drift drift/drift.json --json impact.json --markdown impact.md
       - name: Summary
