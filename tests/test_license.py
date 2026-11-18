@@ -8,8 +8,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 SPDX = "SPDX-License-Identifier: MIT"
-#: Exempt: task inputs (their bytes are part of the task) and probes (copied line for line into the
-#: encrypted task file, so a header there means re-encrypting the answers).
+#: Exempt: task inputs (their bytes are part of the task).
 EXEMPT = ("knowledgework/assistant/corpus/", "knowledgework/developer/toybox/", "knowledgework/fixtures/")
 
 
@@ -23,7 +22,7 @@ def tracked(*patterns):
 
 def test_every_source_file_has_the_spdx_header():
     missing = [f for f in tracked("*.py", "*.sh", "*.ps1")
-               if not f.startswith(EXEMPT) and "/probes/" not in f
+               if not f.startswith(EXEMPT)
                and SPDX not in "".join((REPO / f).read_text(encoding="utf-8").splitlines(keepends=True)[:4])]
     assert not missing, f"add the two-line copyright and SPDX header (see kwengine/grade.py) to: {missing}"
 

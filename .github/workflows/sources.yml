@@ -1,0 +1,143 @@
+name: sources
+
+# Whether every pinned web source (knowledgework/build_fixtures.py PINS) still has its pinned bytes, and for one
+# that changed, whether the tasks' answer keys would change with it (tools/check_sources.py). Weekly, by hand, and
+# from release.yml before a tag publishes. Not a pull-request check: a publisher's change shouldn't block unrelated
+# pull requests. A source already acknowledged as changed (KNOWN_CHANGED) or volatile (VOLATILE) is information,
+# never a failure. Every text a job writes (log, summary, artifact, issue) names tasks, files, URLs, hashes and key
+# field names only, and is checked against the answers' fingerprints first.
+on:
+  schedule:
+    - cron: "23 5 * * 1"  # Mondays 05:23 UTC
+  workflow_dispatch:
+  workflow_call:  # release.yml: a tag publishes only if this passes (the issue is filed by the weekly run only)
+
+permissions:
+  contents: read
+
+jobs:
+  # Downloads and hashes every source. No secrets.
+  drift:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      impact: ${{ steps.check.outputs.impact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -q -r requirements.txt -c constraints.txt
+      - name: Check every pinned source
+        id: check
+        run: python tools/check_sources.py drift --json drift.json --markdown drift.md
+      - name: Summary
+        if: always()
+        run: if [ -f drift.md ]; then cat drift.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Keep the report (URLs, file names and hashes, no answer material)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sources-drift
+          path: drift.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Only when a source changed that isn't acknowledged: rebuilds its tasks' keys from the new bytes (in a temp
+  # folder, deleted after) and compares them with the current keys, decrypted in memory. The answers environment
+  # holds the passphrase and lets only main and v* tags use it.
+  impact:
+    needs: drift
+    if: ${{ !cancelled() && needs.drift.outputs.impact == 'true' }}
+    environment: answers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -q -r requirements.txt -c constraints.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sources-drift
+          path: drift
+      - name: Rebuild the changed sources' keys and compare them
+        env:
+          KW_ANSWERS_PASSPHRASE: ${{ secrets.KW_ANSWERS_PASSPHRASE }}
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+        run: |
+          echo "::add-mask::$KW_ANSWERS_PASSPHRASE"
+          python tools/check_sources.py impact --drift drift/drift.json --json impact.json --markdown impact.md
+      - name: Summary
+        if: always()
+        run: if [ -f impact.md ]; then cat impact.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Keep the report (task ids and key field names, no values)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sources-impact
+          path: impact.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The weekly and manual runs only: opens one issue, updates it while it stays open, closes it when all is well.
+  # No secrets. The body is written by check_sources.py report, which refuses a text that matches the answers'
+  # fingerprints or a canary.
+  report:
+    needs: [drift, impact]
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true  # no report at all still files the issue, saying so
+        with:
+          pattern: sources-*
+          path: reports
+          merge-multiple: true
+      - name: Write the issue body (checked against the answers' fingerprints)
+        id: body
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DRIFT: ${{ needs.drift.result }}
+          IMPACT: ${{ needs.impact.result }}
+        run: |
+          python tools/check_sources.py report --drift reports/drift.json --impact reports/impact.json \
+            --out body.md --run-url "$RUN_URL" --drift-result "$DRIFT" --impact-result "$IMPACT"
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PROBLEM: ${{ steps.body.outputs.problem }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          export KW_TITLE="Upstream sources changed"
+          existing=$(gh issue list --state open --search "\"$KW_TITLE\" in:title" --json number,title \
+            --jq 'map(select(.title == env.KW_TITLE)) | .[0].number // empty')
+          if [ "$PROBLEM" != "true" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Every pinned source checks out again: $RUN_URL"
+            fi
+            exit 0
+          fi
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+            gh issue comment "$existing" --body "Checked again, still failing (the description is updated): $RUN_URL"
+          else
+            gh issue create --title "$KW_TITLE" --body-file body.md
+          fi
