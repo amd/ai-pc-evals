@@ -1280,6 +1280,18 @@ def test_records_and_judge_inputs_never_hold_a_secret(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_help_names_the_command_that_was_typed():
+    """The installed entry point (kwengine.cli:main) is `kwengine`; `python -m kwengine` goes through __main__."""
+    import subprocess
+    import sys
+
+    entry = cli.build_parser().format_help()
+    assert entry.startswith("usage: kwengine ") and "python -m kwengine" not in entry
+    out = subprocess.run([sys.executable, "-m", "kwengine", "--help"], capture_output=True, text=True,
+                         cwd=Path(cli.__file__).resolve().parents[1], check=True).stdout
+    assert out.startswith("usage: python -m kwengine ") and "  python -m kwengine grade RUN" in out
+
+
 def test_the_cli_parses_every_command():
     parser = cli.build_parser()
     args = parser.parse_args(

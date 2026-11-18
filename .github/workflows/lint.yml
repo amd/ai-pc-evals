@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:  # release.yml runs these same jobs on a tag before it publishes (fingerprint-note: pull requests only)
 
 permissions:
   contents: read
