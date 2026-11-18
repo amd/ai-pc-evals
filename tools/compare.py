@@ -22,6 +22,7 @@ from typing import Dict, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(1, str(Path(__file__).resolve().parent.parent))  # kwengine
+import console  # noqa: E402
 import difficulty  # noqa: E402
 from kwengine import reasons  # noqa: E402
 
@@ -169,7 +170,7 @@ def render(base: dict, new: dict, diff: Dict[str, list]) -> str:
               "| Task | Difficulty | Change | Base | New | Quality | New: why |", "|---|---|---|---|---|---|---|"]
     for kind in ("regressed", "vanished", "ungraded", "improved", "added", "same"):
         for tid, b, n in diff[kind]:
-            why = (n or {}).get("why", "").replace("|", "/").replace("\n", " ")[:100]
+            why = console.clip((n or {}).get("why", "").replace("|", "/").replace("\n", " "), 100)
             lines.append(f"| {tid} | {difficulty.level(tid) or '—'} | {kind} | {mark(b)} | {mark(n)} | {q(b)} → {q(n)} | {why} |")
     return "\n".join(lines) + "\n"
 
@@ -187,7 +188,7 @@ def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     base, new = load(args.base), load(args.new)
     diff = compare(base, new)
-    print(render(base, new, diff))
+    print(console.show(render(base, new, diff)))  # plain text on a terminal; markdown for a pipe
     failures = gate_failures(base, new, diff, args.allow_version_drift) if args.gate else []
     if failures:
         print(f"GATE FAILED: {'; '.join(failures)}", file=sys.stderr)

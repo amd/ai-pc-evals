@@ -294,7 +294,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         (dest / "audit-notes.json").write_text(json.dumps(result["notes"], indent=1), encoding="utf-8")
         for f in result["notes"]:
             print(f"CHECK {f['task']}: {f['kind']}: {f['where']}: {f['detail']}")
-    extra = ["--judge-backend", args.judge_backend] if args.judge_backend else []
+    extra = ["--brief"] + (["--judge-backend", args.judge_backend] if args.judge_backend else [])
     import keys  # noqa: PLC0415
 
     try:
@@ -304,7 +304,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     if code == 0:
         write_summary(run_dir)
-    print(f"[GRADED] scorecard, judge inputs and summary: {dest}")
+    from console import kv  # noqa: PLC0415
+    print(kv("summary", dest / "summary.md", indent=""))
     return code
 
 
@@ -314,8 +315,8 @@ def write_summary(run_dir: Path) -> None:
     import evalversion  # noqa: PLC0415
     import run_eval  # noqa: PLC0415  (it imports this module: only here, once grading is done)
 
-    try:
-        print(run_eval.summarize(run_dir, evalversion.version()))
+    try:  # on the console as run_eval.py prints it: one key: value block per task
+        print("\n" + run_eval.plain(run_eval.summarize(run_dir, evalversion.version()), run_eval.judge_notes(run_dir)))
     except (OSError, ValueError, KeyError) as e:  # the scorecard stands; only the summary is missing
         print(f"warning: summary.md not written ({type(e).__name__}: {e})", file=sys.stderr)
 
