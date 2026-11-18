@@ -457,7 +457,7 @@ def test_a_secret_in_a_tool_call_is_scrubbed_from_the_console_line_result_json_a
     run_dir = run_eval.run("fake", "m", "verify", ["verify-02"], tmp_path / "out", tmp_path / "fx", "m",
                            do_grade=False, measure=False)
     out = capsys.readouterr().out
-    assert "verify-02: last call before the cap: bash" in out and secret not in out
+    assert "  tool calls: last call before the cap: bash" in out and secret not in out
     result = (run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8")
     assert "last call before the cap" not in result and secret not in result
     assert json.loads(result)["tool_health"]["last_call"].startswith("bash ")
