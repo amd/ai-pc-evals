@@ -625,3 +625,190 @@ def test_a_measured_run_stores_telemetry_and_always_stops_the_sampler(tmp_path, 
     run_dir = run()
     result = json.loads((run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8"))
     assert result["telemetry"] == block and order == ["start", "stop", "contain"]
+
+
+# ----------------------------------------------------------------- the server's settings, every task
+REAL_SETTINGS = telemetry.settings_block  # conftest replaces it in every test; these use the real one
+PROPS = {"model_path": "C:\\Users\\u\\.cache\\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", "model_ftype": "Q4_K - Medium",
+         "build_info": "b11846-0d9d6d2b", "total_slots": 1,
+         "default_generation_settings": {"n_ctx": 65536, "params": {
+             "temperature": 1.0, "top_k": 20, "top_p": 0.949999988079071, "min_p": 0.0, "repeat_penalty": 1.0,
+             "dry_multiplier": 0.0}}}
+
+
+def fake_json(monkeypatch, answers):
+    """engine_info.fetch answers (port, path) with answers' JSON (a list is consumed one reading at a time)."""
+    import json
+
+    def fetch(port, path):
+        a = answers.get((port, path))
+        a = a.pop(0) if isinstance(a, list) else a
+        return None if a is None else json.dumps(a)
+    monkeypatch.setattr(telemetry.engine_info, "fetch", fetch)
+
+
+def test_settings_are_read_from_each_server(monkeypatch):
+    fake_json(monkeypatch, {(8001, "/props"): PROPS,
+                            (8000, "/v1/models"): {"data": [{"id": "q", "root": "Qwen/Qwen3-8B", "max_model_len": 8192}]}})
+    block = REAL_SETTINGS(servers=[{**SERVER, "port": 8001}, {"pid": 9, "kind": "vllm", "port": 8000},
+                                   {**SERVER, "pid": 7, "port": 8002, "embeddings": True},  # GAIA's embedder
+                                   {"pid": 8, "kind": "ollama", "port": 11434}])
+    assert block["reason"] is None and block["read"] == "before the task"
+    llama, vllm = block["servers"]
+    assert llama == {"kind": "llama-server", "port": 8001, "pid": 4321, "model_path": PROPS["model_path"],
+                     "model_ftype": "Q4_K - Medium", "build_info": "b11846-0d9d6d2b", "total_slots": 1,
+                     "n_ctx": 65536, "temperature": 1.0, "top_k": 20, "top_p": 0.949999988079071, "min_p": 0.0,
+                     "repeat_penalty": 1.0}
+    assert vllm == {"kind": "vllm", "port": 8000, "pid": 9, "model": "Qwen/Qwen3-8B", "max_model_len": 8192}
+    fake_json(monkeypatch, {})
+    monkeypatch.setattr(telemetry, "probe", lambda: [])
+    none = REAL_SETTINGS(servers=[SERVER])
+    assert none["servers"] == [] and "answered /props" in none["reason"]
+    monkeypatch.setattr(telemetry.local_servers, "list_servers", lambda: 1 / 0)
+    assert "ZeroDivisionError" in REAL_SETTINGS()["reason"]  # recorded, never raised
+
+
+def test_a_change_from_the_first_tasks_settings_is_listed_and_a_new_port_is_not(monkeypatch):
+    def block(**changed):
+        props = {**PROPS, "default_generation_settings": {"n_ctx": changed.pop("n_ctx", 65536),
+                                                          "params": {**PROPS["default_generation_settings"]["params"],
+                                                                     **changed}}}
+        fake_json(monkeypatch, {(8001, "/props"): props})
+        return REAL_SETTINGS(servers=[{**SERVER, "port": 8001}])
+
+    first = block()
+    reloaded = block()
+    reloaded["servers"][0].update(port=51234, pid=99)  # Lemonade reloaded the same settings on a new port
+    assert telemetry.settings_changes(first, reloaded) == []
+    assert telemetry.settings_changes(first, block(n_ctx=262144, temperature=0.800000011920929)) == [
+        "n_ctx 65536 → 262144", "temperature 1 → 0.8"]
+    assert telemetry.settings_changes(first, {"servers": []}) == []  # nothing serving: can't tell, not a change
+    gemma = {**first["servers"][0], "model_path": "/m/gemma-4-E4B.gguf", "n_ctx": 8192}
+    assert telemetry.settings_changes(first, {"servers": [first["servers"][0], gemma]}) == [
+        "gemma-4-E4B.gguf: now served too"]
+    assert telemetry.settings_changes(first, {"servers": [gemma]}) == [
+        "model_path Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf → gemma-4-E4B.gguf", "n_ctx 65536 → 8192"]
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_every_run_records_the_server_and_warns_when_it_changes(tmp_path, monkeypatch, capsys, reload):
+    """Without --telemetry: each result.json has the server block; a reload between the tasks prints one warning and
+    puts the change in summary.md; a run where nothing changes gets neither."""
+    import json
+    import run_eval
+    from agents.base import Agent, AgentResult
+
+    settings = {"kind": "llama-server", "port": 8001, "pid": 1, "model_path": "/m/q.gguf", "n_ctx": 65536,
+                "temperature": 1.0}
+    readings = [{"read": "before the task", "servers": [settings], "reason": None},
+                {"read": "before the task", "servers": [{**settings, "port": 8002, "pid": 2,
+                                                         "n_ctx": 131072 if reload else 65536}], "reason": None}]
+
+    class Fake(Agent):
+        name = "fake"
+        capabilities = frozenset({"web"})  # verify-01 needs it
+
+        def run(self, task, log_dir):
+            return AgentResult(answer="Done.", wall_seconds=3.0, model="m")
+    monkeypatch.setattr(run_eval, "EVAL_HOME", tmp_path / "home")
+    monkeypatch.setattr(run_eval, "get_agent", lambda name, model: Fake("m"))
+    monkeypatch.setattr(run_eval.telemetry, "settings_block", lambda read="before the task", **_: readings.pop(0))
+    run_dir = run_eval.run("fake", "m", "verify", ["verify-01", "verify-02"], tmp_path / "out", tmp_path / "fx", "m",
+                           do_grade=False)
+    out = capsys.readouterr().out
+    results = {tid: json.loads((run_dir / ".records" / tid / "result.json").read_text(encoding="utf-8"))
+               for tid in ("verify-01", "verify-02")}
+    assert results["verify-01"]["server"]["servers"] == [settings] and "telemetry" not in results["verify-01"]
+    assert "server_changed" not in results["verify-01"]
+    graded = tmp_path / "graded" / run_eval.run_key(run_dir)
+    monkeypatch.setattr(run_eval, "graded_dir", lambda d: graded)
+    graded.mkdir(parents=True)
+    (graded / "scorecard.json").write_text(json.dumps({
+        "harness": "fake", "model": "m", "suite": "verify", "axes": [],
+        "tasks": [{"id": tid, "passed": True, "why": "", "wall_seconds": 3.0, "answer_set": "public", "judge": {}}
+                  for tid in results]}), encoding="utf-8")
+    text = run_eval.summarize(run_dir, {"framework": "x", "tasks": "t", "commit": "c", "dirty": False})
+    if not reload:
+        assert "server_changed" not in results["verify-02"] and "model server settings" not in out
+        assert run_eval.SERVER_CHANGED not in text
+        return
+    assert results["verify-02"]["server_changed"] == {"since": "verify-01", "changes": ["n_ctx 65536 → 131072"]}
+    assert out.count("model server settings differ") == 1
+    assert "  warning:    model server settings differ from verify-01's: n_ctx 65536 → 131072" in out
+    assert f"{run_eval.SERVER_CHANGED}\n- verify-02: changed since verify-01: n_ctx 65536 → 131072\n" in text
+    assert "  server:     changed since verify-01: n_ctx 65536 → 131072" in run_eval.plain(text)
+
+
+def test_no_server_before_the_task_is_read_again_after_it(monkeypatch):
+    import run_eval
+    from agents.base import AgentResult
+
+    monkeypatch.setattr(run_eval.telemetry, "settings_block", lambda read="before the task", **_: {
+        "read": read, "servers": [{"kind": "llama-server", "n_ctx": 4096}], "reason": None})
+    result = AgentResult(answer="", wall_seconds=1.0, model="m")
+    first = run_eval.note_server("a", result, {"read": "before the task", "servers": [], "reason": "none"}, None)
+    assert result.extra["server"]["read"] == "after the task" and first == ("a", result.extra["server"])
+
+
+def test_default_ports_are_tried_only_when_asked(monkeypatch):
+    """On Windows a port nothing listens on takes about 2 s to refuse: the run tries vLLM's and SGLang's default
+    ports before its first task, and after that only if a server answered there."""
+    probed = []
+    monkeypatch.setattr(telemetry, "probe", lambda: probed.append(1) or [])
+    fake_json(monkeypatch, {})
+    assert REAL_SETTINGS(servers=[], probe_ports=False)["servers"] == [] and probed == []
+    assert REAL_SETTINGS(servers=[])["servers"] == [] and probed == [1]
+
+
+def run_two(tmp_path, monkeypatch, readings):
+    import run_eval
+    from agents.base import Agent, AgentResult
+
+    class Fake(Agent):
+        name = "fake"
+        capabilities = frozenset({"web"})
+
+        def run(self, task, log_dir):
+            return AgentResult(answer="Done.", wall_seconds=3.0, model="m")
+    calls = []
+
+    def settings_block(read="before the task", servers=None, probe_ports=True):
+        calls.append((read, probe_ports))
+        return readings.pop(0)
+    monkeypatch.setattr(run_eval, "EVAL_HOME", tmp_path / "home")
+    monkeypatch.setattr(run_eval, "get_agent", lambda name, model: Fake("m"))
+    monkeypatch.setattr(run_eval.telemetry, "settings_block", settings_block)
+    run_dir = run_eval.run("fake", "m", "verify", ["verify-01", "verify-02"], tmp_path / "out", tmp_path / "fx", "m",
+                           do_grade=False)
+    return run_dir, calls
+
+
+def test_a_run_with_no_model_server_probes_the_default_ports_once(tmp_path, monkeypatch):
+    """A cloud agent's run (no local server): the first task looks on the default ports, then nothing; the read
+    after a task never does (a server started by the task is in the process list)."""
+    none = {"servers": [], "reason": "none"}
+    _, calls = run_two(tmp_path, monkeypatch, [dict(none, read="before the task"), dict(none, read="after the task"),
+                                               dict(none, read="before the task"), dict(none, read="after the task")])
+    assert calls == [("before the task", True), ("after the task", False), ("before the task", False),
+                     ("after the task", False)]
+    docker = {"read": "before the task", "servers": [{"kind": "vllm", "port": 8000, "pid": None, "model": "q"}],
+              "reason": None}
+    _, calls = run_two(tmp_path / "docker", monkeypatch, [docker, docker])
+    assert calls == [("before the task", True), ("before the task", True)]  # found there: looked for there again
+
+
+def test_the_warning_and_result_hold_no_secret(tmp_path, monkeypatch, capsys):
+    """A key in the environment that turns up in what the server reports is redacted from the warning line, as
+    record() redacts it from result.json."""
+    import json
+
+    key = "sk-local-0123456789abcdefXYZ"
+    monkeypatch.setenv("KW_LOCAL_API_KEY", key)
+    first = {"kind": "llama-server", "port": 8001, "pid": 1, "model_path": "/m/q.gguf", "build_info": "b1"}
+    reload = dict(first, build_info=f"b2-{key}")
+    run_dir, _ = run_two(tmp_path, monkeypatch, [{"read": "before the task", "servers": [first], "reason": None},
+                                                 {"read": "before the task", "servers": [reload], "reason": None}])
+    out = capsys.readouterr().out
+    assert "model server settings differ from verify-01's: build_info b1 → b2-[REDACTED" in out and key not in out
+    assert key not in (run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8")
+    assert json.loads((run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8"))["server_changed"]
