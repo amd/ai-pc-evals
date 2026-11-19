@@ -324,7 +324,8 @@ def test_the_time_box_is_checked_between_files_not_only_between_folders(tmp_path
         for path in preflight.walk_files([tmp_path], [], 5.0, set()):
             walked.append(path.name)
             now[0] = 10.0  # the first file took past the deadline
-    assert walked == ["a.txt"]
+    # One file, whichever the folder lists first: os.scandir's order is the filesystem's (ext4 hashes names).
+    assert len(walked) == 1 and walked[0] in {"a.txt", "b.txt", "c.txt"}
 
 
 def test_readable_check(env):
