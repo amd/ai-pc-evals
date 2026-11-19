@@ -125,8 +125,8 @@ def test_without_the_cli_a_key_falls_back_to_the_api_and_says_so(monkeypatch):
 
 
 def test_a_bad_backend_or_an_api_backend_without_a_key_stops_grading():
-    with pytest.raises(ValueError, match="one of claude-code, api"):
-        ft.resolve_judge_backend({ft.JUDGE_BACKEND_ENV: "openai"})
+    with pytest.raises(ValueError, match="one of claude-code, api, openai"):
+        ft.resolve_judge_backend({ft.JUDGE_BACKEND_ENV: "gemini"})
     with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
         ft.resolve_judge_backend({ft.JUDGE_BACKEND_ENV: "api"})
 
