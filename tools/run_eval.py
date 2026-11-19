@@ -59,6 +59,7 @@ from kwengine import turns  # noqa: E402
 from selection import Filters, SelectionError, select  # noqa: E402
 from agents import TaskSpec, available, get_agent  # noqa: E402
 from agents import trace as trace_mod  # noqa: E402
+from agents.command import LOCAL_BASE_URL, CommandAgent  # noqa: E402
 from agents.base import missing_psutil  # noqa: E402
 from grade_run import (JUDGE_ATTEMPTS, card_dir_args, grade_with_answers, graded_home, harness_env,  # noqa: E402
                        probe_user_error, relocate_grading_outputs, run_task_ids)
@@ -1441,6 +1442,37 @@ def check_model_server(model: str, measure: bool, manual: bool = False) -> None:
                         "--check-server")
 
 
+def server_window(model: str, base_url: Optional[str] = None) -> Optional[int]:
+    """Without --check-server: the window of the model server a command-line agent uses, read once (no request
+    to the model), and a warning when it is under check_server.MIN_CONTEXT. *base_url* is the server the agent's
+    command names ({base_url}); else the one server running here. None when no one server can be told, which is
+    not a problem here: --check-server is the check that fails a run."""
+    import check_server  # noqa: PLC0415
+
+    try:
+        checks = check_server.run_checks(base_url, model=model or None, need_metrics=False, context_only=True)
+    except Exception:  # noqa: BLE001 - a warning only: whatever goes wrong here, the run goes on
+        return None
+    context = next((c for c in checks if c.key == "context"), None)
+    if context is None or context.window is None:
+        return None
+    if context.status == "FAIL":
+        print(kv("warning", f"the model server's window is {context.text}. Check it with: python "
+                            "tools/check_server.py", indent=""), flush=True)
+    return context.window
+
+
+def small_window_hint(window: Optional[int]) -> str:
+    """What a failed task's error adds when the server's window was under check_server.MIN_CONTEXT: an agent that
+    needs more can fail without saying why (Hermes refuses to start a turn; OpenCode stops when it fills)."""
+    import check_server  # noqa: PLC0415
+
+    if not window or window >= check_server.MIN_CONTEXT:
+        return ""
+    return (f" (the model server's window was {window:,} tokens, under the {check_server.MIN_CONTEXT:,} most agents "
+            "need: python tools/check_server.py)")
+
+
 def run(agent_name: str, model: str, suite: str, only: Optional[List[str]], out: Optional[Path],
         fixtures: Path, judge_model: str, do_grade: bool = True, look: bool = False,
         include_unsupported: bool = False, check_first: bool = True, filters: Optional[Filters] = None,
@@ -1479,8 +1511,12 @@ def run(agent_name: str, model: str, suite: str, only: Optional[List[str]], out:
         # run before hours of agent work.
         passphrases([t["id"] for t in tasks], check=True)
     print(flush=True)  # an empty line: the output stands apart from the command typed above it
+    window = None
     if check_server:
         check_model_server(model, measure, manual=bool(getattr(agent, "manual", False)))
+    elif isinstance(agent, CommandAgent):  # a local agent: warn about a small window, without failing the run
+        named = any("{base_url}" in a for a in agent.spec["cmd"])  # the server it is told to use, not a guess
+        window = server_window(model, (os.environ.get("KW_LOCAL_BASE_URL") or LOCAL_BASE_URL) if named else None)
     if check_first and needs_answers(suite):
         preflight()
     try:
@@ -1565,6 +1601,8 @@ def run(agent_name: str, model: str, suite: str, only: Optional[List[str]], out:
             result.extra["context"] = trace_mod.with_server(
                 result.extra.get("context") or trace_mod.context(trace_mod.Trace("none")),
                 (measured or {}).get("context"))
+        if result.error:  # a small window can be why, while the agent's own error doesn't say so (#135)
+            result.error += small_window_hint((result.extra.get("context") or {}).get("window") or window)
         for key, line in (("tool calls", trace_mod.health_line(t["id"], result.extra.get("tool_health") or {})
                            or trace_mod.calls_brief(result.extra.get("tool_health") or {})),
                           ("context", trace_mod.context_line(t["id"], result.extra.get("context") or {})
