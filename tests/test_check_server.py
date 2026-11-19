@@ -367,3 +367,47 @@ def test_run_eval_passes_a_manual_agents_model_as_a_label(monkeypatch):
     monkeypatch.setattr(cs, "run_checks", run_checks)
     run_eval.check_model_server("Qwen3.6 35B", False, manual=True)
     assert seen == {"model": "Qwen3.6 35B", "label": True, "metrics": False}
+
+
+def test_context_only_reads_the_window_without_asking_the_model(fake):
+    srv = fake(llama_routes(n_ctx=8192))
+    checks = cs.run_checks(srv.root + "/v1", "qwen", context_only=True)
+    assert [c.key for c in checks] == ["server", "context"] and srv.posts == []  # no tool-call request
+    assert checks[1].status == "FAIL" and checks[1].window == 8192
+    assert cs.run_checks(fake(llama_routes()).root + "/v1", "qwen", context_only=True)[1].window == 65536
+
+
+def test_a_small_window_is_warned_about_and_named_on_a_failed_task(tmp_path, monkeypatch, capsys):
+    """#135: Hermes fails with only 'couldn't confirm how this turn ended' on a window under 64K, and OpenCode
+    stops without a word when it fills; the runner says what it knows about the window, for any agent."""
+    import run_eval
+    from agents.command import CommandAgent
+
+    assert run_eval.small_window_hint(None) == "" and run_eval.small_window_hint(65536) == ""
+    assert "window was 8,192 tokens, under the 65,536" in run_eval.small_window_hint(8192)
+    small = [cs.Check("server", "ok", "here"), cs.Check("context", "FAIL", "8,192 tokens (slot n_ctx), under 65,536", 8192)]
+    seen = []
+    monkeypatch.setattr(cs, "run_checks", lambda base=None, **kw: seen.append(base) or (small if kw.get("context_only") else []))
+    monkeypatch.setenv("KW_LOCAL_BASE_URL", "http://127.0.0.1:8081/v1")
+    # An entry that names the server ({base_url}): that is the one read, not a guess among the servers running here.
+    agent = CommandAgent("cli", {"cmd": [sys.executable, "-c", "import sys; print('no reply'); sys.exit(1)", "{base_url}"]})
+    monkeypatch.setattr(run_eval, "EVAL_HOME", tmp_path / "home")
+    monkeypatch.setattr(run_eval, "get_agent", lambda name, model: agent)
+    run_dir = run_eval.run("cli", "m", "verify", ["verify-02"], tmp_path / "out", tmp_path / "fx", "m", do_grade=False)
+    out = capsys.readouterr().out
+    assert "warning:    the model server's window is 8,192 tokens (slot n_ctx), under 65,536" in out
+    assert seen == ["http://127.0.0.1:8081/v1"]
+    result = json.loads((run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8"))
+    assert result["error"].endswith("(the model server's window was 8,192 tokens, under the 65,536 most agents need: "
+                                    "python tools/check_server.py)")
+
+
+def test_no_window_when_no_one_server_can_be_told_or_reading_it_fails(monkeypatch):
+    import run_eval
+
+    monkeypatch.setattr(cs, "run_checks", lambda **kw: [cs.Check("server", "FAIL", "several model servers")])
+    assert run_eval.server_window("m") is None
+    def boom(**kw):
+        raise OSError("psutil gone")
+    monkeypatch.setattr(cs, "run_checks", boom)
+    assert run_eval.server_window("m") is None  # a warning only: the run goes on

@@ -78,6 +78,7 @@ class Check:
     key: str
     status: str  # "ok", "FAIL", or "note" (printed, not a failure: not checked, unknown, not needed)
     text: str
+    window: Optional[int] = None  # the context check's window, in tokens, when the server reports it
 
     @property
     def value(self) -> str:
@@ -188,11 +189,12 @@ def check_context(kind: Optional[str], base: str, model: str, entry: Dict[str, A
                                         f"and Lemonade are read): make sure it is {MIN_CONTEXT:,} tokens or more")
     n = int(n)
     if n >= MIN_CONTEXT:
-        return Check("context", "ok", f"{n:,} tokens, {where}")
+        return Check("context", "ok", f"{n:,} tokens, {where}", window=n)
     shared = (f"; it has {slots} slots, and without --kv-unified each gets its share of -c"
               if slots and slots > 1 and kind != "lemonade" else "")
     return Check("context", "FAIL", f"{n:,} tokens ({where}), under {MIN_CONTEXT:,}: OpenCode stops without a word "
-                                    f"when it fills and Hermes won't start; {_fix(CONTEXT_FIX, kind, model=model)}{shared}")
+                                    f"when it fills and Hermes won't start; {_fix(CONTEXT_FIX, kind, model=model)}{shared}",
+                 window=n)
 
 
 def check_tool_call(kind: Optional[str], base: str, model: str, key: Optional[str]) -> Check:
@@ -287,14 +289,15 @@ def _chat_models(entries: List[Dict[str, Any]]) -> List[str]:
 
 def run_checks(base_url: Optional[str] = None, model: Optional[str] = None, key: Optional[str] = None,
                need_metrics: bool = True, model_is_label: bool = False,
-               report: Optional[Callable[[Check], None]] = None) -> List[Check]:
+               report: Optional[Callable[[Check], None]] = None, context_only: bool = False) -> List[Check]:
     """Every check, in order; a check that can't run once an earlier one failed is a note. Each line is scrubbed of
     secrets, and *report* gets each check as soon as it is made (the tool-call request can take minutes). With
     *model_is_label* (a manual agent's --model names the leg, as an app shows it), a *model* the server doesn't list
-    falls back to the one model it serves."""
+    falls back to the one model it serves. With *context_only*, it stops after the context check: no request to
+    the model, so it takes a second (run_eval.py's window warning)."""
     key = key if key is not None else os.environ.get("KW_LOCAL_API_KEY")
     clean, out = scrubber(key), []
-    for c in _checks(base_url, model, key, need_metrics, model_is_label):
+    for c in _checks(base_url, model, key, need_metrics, model_is_label, context_only):
         c.text = clean(c.text)
         out.append(c)
         if report:
@@ -303,7 +306,7 @@ def run_checks(base_url: Optional[str] = None, model: Optional[str] = None, key:
 
 
 def _checks(base_url: Optional[str], model: Optional[str], key: Optional[str], need_metrics: bool,
-            model_is_label: bool) -> Iterator[Check]:
+            model_is_label: bool, context_only: bool = False) -> Iterator[Check]:
     where = "--base-url" if base_url else ""
     if not base_url and os.environ.get("KW_LOCAL_BASE_URL"):
         base_url, where = os.environ["KW_LOCAL_BASE_URL"], "KW_LOCAL_BASE_URL"
@@ -371,6 +374,8 @@ def _checks(base_url: Optional[str], model: Optional[str], key: Optional[str], n
             return
     yield Check("server", "ok", f"{at}, {kind or 'an OpenAI-compatible server'}, model {chosen}{label}")
     yield check_context(kind, base, chosen, entries[chosen], loaded)
+    if context_only:
+        return
     yield check_tool_call(kind, base, chosen, key)
     yield check_metrics(kind, base, loaded, need_metrics)
 
