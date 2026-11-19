@@ -461,3 +461,16 @@ def test_a_secret_in_a_tool_call_is_scrubbed_from_the_console_line_result_json_a
     result = (run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8")
     assert "last call before the cap" not in result and secret not in result
     assert json.loads(result)["tool_health"]["last_call"].startswith("bash ")
+
+
+def test_web_uses_lists_web_calls_only():
+    t = T.Trace("opencode")
+    t.calls = [T.Call("websearch", {"query": "rocm release date"}), T.Call("webfetch", {"url": "https://amd.com"}),
+               T.Call("web_extract", {"urls": ["https://a.example"]}), T.Call("search_files", {"pattern": "x"}),
+               T.Call("grep", {"pattern": "y"}), T.Call("bash", {"command": "ls"}),
+               T.Call("mcp", {"tool": "search", "args": {"query": "gfx1151"}}),
+               T.Call("mcp", {"tool": "fetch_content", "args": '{"url": "https://b.example"}'}),
+               T.Call("mcp", {"tool": "read_memory", "args": {}})]
+    assert T.web_uses(t) == ["websearch: rocm release date", "webfetch: https://amd.com",
+                             'web_extract: ["https://a.example"]', "mcp:search: gfx1151",
+                             "mcp:fetch_content: https://b.example"]
