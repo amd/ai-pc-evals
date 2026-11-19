@@ -367,3 +367,15 @@ def test_run_eval_passes_a_manual_agents_model_as_a_label(monkeypatch):
     monkeypatch.setattr(cs, "run_checks", run_checks)
     run_eval.check_model_server("Qwen3.6 35B", False, manual=True)
     assert seen == {"model": "Qwen3.6 35B", "label": True, "metrics": False}
+
+
+def test_the_script_runs_as_its_usage_says(tmp_path):
+    """python tools/check_server.py puts only tools/ on the path: kwengine (the scrubber) must still import."""
+    import os
+    import subprocess
+
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "KW_LOCAL_BASE_URL")}
+    done = subprocess.run([sys.executable, str(Path(cs.__file__)), "--base-url", "http://127.0.0.1:9/v1"],
+                          capture_output=True, text=True, cwd=tmp_path, env=env, timeout=120)
+    assert "ModuleNotFoundError" not in done.stderr, done.stderr
+    assert done.stdout.startswith("server:") and "FAIL" in done.stdout

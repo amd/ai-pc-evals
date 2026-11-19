@@ -38,6 +38,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(1, str(HERE.parent))  # kwengine, for the scrubber: run as python tools/check_server.py, only tools/ is on it
 import local_servers  # noqa: E402
 import telemetry  # noqa: E402
 from agents import trace as trace_mod  # noqa: E402
