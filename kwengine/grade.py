@@ -880,6 +880,7 @@ def grade_runs(
     each leg's work beside the other's, in no order it could learn from."""
     # The backend (KW_JUDGE_BACKEND in *env*: Claude Code by default) is settled once, so one run is one judge.
     backend, note = ft.resolve_judge_backend(env)
+    ft.check_judge_model(judge_model, backend)
     env = {**env, ft.JUDGE_BACKEND_ENV: backend}
     if card_dirs is not None and len(card_dirs) != len(run_dirs):
         raise ValueError(f"{len(card_dirs)} scorecard folder(s) for {len(run_dirs)} run(s): give one per run")
