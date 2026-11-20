@@ -45,11 +45,11 @@ def test_counter_deltas_give_tokens_and_speeds(monkeypatch):
 def test_model_time_is_the_servers_busy_share_of_the_tasks_wall_time():
     block = {"server": {"kind": "llama-server", "model_s": 41.2, "prefill_tok_s": 912.0, "decode_tok_s": 24.3}}
     assert telemetry.add_model_share(block, 48.4)["server"]["model_share"] == 0.851
-    assert ("model time", "41 s of 48 s (85%), 7 s outside the model") in telemetry.fields(block, 48.4)
+    assert ("model time", "41 s of 48 s (85%), 7 s outside the model (estimate)") in telemetry.fields(block, 48.4)
     assert [k for k, _ in telemetry.fields(block)][:3] == ["prefill", "decode", "vram peak"]  # no wall: no line
     # Requests sent at once each add their own seconds: over 100% says why, and nothing is negative.
     assert telemetry.model_time(50.0, 48.0) == ("50 s of 48 s (104%: requests sent at once each count their own "
-                                                "time), 0 s outside the model")
+                                                "time), 0 s outside the model (estimate)")
     unknown = {"server": {"kind": None, "model_s": None, "reason": "no model server found"}}
     assert telemetry.add_model_share(unknown, 30.0)["server"]["model_share"] is None
     assert ("model time", "n/a") in telemetry.fields(unknown, 30.0)

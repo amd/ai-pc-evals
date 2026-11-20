@@ -93,8 +93,8 @@ def model_time(rows: Iterable[Tuple[Optional[float], Optional[float]]]) -> Optio
 
 
 def model_time_text(mt: Optional[dict]) -> str:
-    """``87% · 1 s outside`` (``—`` when unknown)."""
-    return "—" if not mt else f"{mt['share']:.0%} · {mt['median_outside_s']:.0f} s outside"
+    """``87% · 1 s outside (estimate)`` (``—`` when unknown)."""
+    return "—" if not mt else f"{mt['share']:.0%} · {mt['median_outside_s']:.0f} s outside (estimate)"
 
 
 def load(arg: str) -> dict:

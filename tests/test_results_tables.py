@@ -479,7 +479,7 @@ def test_model_time_from_telemetry_is_a_row_and_survives_the_scoreboard(tmp_path
     out = tmp_path / "sb.json"
     rt.main(["--from-graded", str(d), "--scoreboard-out", str(out)])
     md = capsys.readouterr().out
-    assert "| Model time | 58% · 15 s outside |" in md  # 41 of 71 s; median of 6 and 24 s outside
+    assert "| Model time | 58% · 15 s outside (estimate) |" in md  # 41 of 71 s; median of 6 and 24 s outside
     summary = json.loads(out.read_text(encoding="utf-8"))["arms"]["claude-code opus"]["summary"]
     assert (summary["model_share"], summary["median_outside_s"]) == (0.577, 15.0)
     rt.main([str(out)])

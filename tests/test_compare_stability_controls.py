@@ -179,7 +179,7 @@ def test_compare_shows_each_sides_model_time_when_it_was_measured(tmp_path, caps
                 json.dumps({"telemetry": {"server": {"model_s": model_s}}}), encoding="utf-8")
         sides.append(str(d))
     assert compare.main(sides) == 0
-    assert "base 80% · 5 s outside; new —" in capsys.readouterr().out
+    assert "base 80% · 5 s outside (estimate); new —" in capsys.readouterr().out
     # A run dir outside KW_EVAL_HOME, graded into the graded home: its own records are read.
     run = tmp_path / "elsewhere" / "pi-x" / "c"
     (run / ".records" / "t1").mkdir(parents=True)

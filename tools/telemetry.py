@@ -1116,13 +1116,14 @@ def add_model_share(block: Dict[str, Any], wall_s: Optional[float]) -> Dict[str,
 
 
 def model_time(model_s: Optional[float], wall_s: Optional[float]) -> Optional[str]:
-    """``41 s of 48 s (85%), 7 s outside the model``, or None when either is unknown."""
+    """``41 s of 48 s (85%), 7 s outside the model (estimate)``, or None when either is unknown. An estimate: the
+    server's timers leave out a request's wait for a slot, and count any other client of the same server."""
     if model_s is None or not wall_s or wall_s <= 0:
         return None
     share = model_s / wall_s
     why = ": requests sent at once each count their own time" if share > 1.005 else ""
     return (f"{model_s:.0f} s of {wall_s:.0f} s ({share:.0%}{why}), "
-            f"{max(wall_s - model_s, 0):.0f} s outside the model")
+            f"{max(wall_s - model_s, 0):.0f} s outside the model (estimate)")
 
 
 def line(block: Dict[str, Any]) -> str:
