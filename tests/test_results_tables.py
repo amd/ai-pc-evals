@@ -466,3 +466,24 @@ def test_a_run_folder_is_read_through_its_graded_scorecard_never_one_found_in_it
     (graded / "scorecard.json").write_text("{}", encoding="utf-8")
     assert compare.locate(str(run)) == (graded / "scorecard.json", run)
     assert compare.locate(str(graded)) == (graded / "scorecard.json", run)
+
+
+def test_model_time_from_telemetry_is_a_row_and_survives_the_scoreboard(tmp_path, capsys):
+    d = graded_run(tmp_path)
+    server = {"kw-01-multihop-research": {"model_s": 35.0},  # wall 41 s: 6 s outside the model
+              # v0.7.3 kept only the speeds: 1000/500 + 100/25 = 6 s of 30 s, 24 s outside
+              "dev-gc-injected-note": {"tokens_in": 1000, "prefill_tok_s": 500.0, "tokens_out": 100, "decode_tok_s": 25.0}}
+    for tid, s in server.items():
+        (d / ".records" / tid).mkdir(parents=True)
+        (d / ".records" / tid / "result.json").write_text(json.dumps({"telemetry": {"server": s}}), encoding="utf-8")
+    out = tmp_path / "sb.json"
+    rt.main(["--from-graded", str(d), "--scoreboard-out", str(out)])
+    md = capsys.readouterr().out
+    assert "| Model time | 58% · 15 s outside |" in md  # 41 of 71 s; median of 6 and 24 s outside
+    summary = json.loads(out.read_text(encoding="utf-8"))["arms"]["claude-code opus"]["summary"]
+    assert (summary["model_share"], summary["median_outside_s"]) == (0.577, 15.0)
+    rt.main([str(out)])
+    assert capsys.readouterr().out == md
+    plain = graded_run(tmp_path, leg="no-telemetry")
+    rt.main(["--from-graded", str(plain)])
+    assert "Model time" not in capsys.readouterr().out

@@ -164,3 +164,31 @@ def test_compare_reads_the_version_from_the_graded_folder_and_warns_when_a_side_
     w = compare.warnings(base, new)
     assert any(x.startswith("NEW has no eval-version.json") for x in w)
     assert not any(x.startswith("BASE has no") for x in w)
+
+
+def test_compare_shows_each_sides_model_time_when_it_was_measured(tmp_path, capsys, monkeypatch):
+    sides = []
+    for name, model_s in (("a", 20.0), ("b", None)):
+        d = tmp_path / "graded" / "pi-x" / name
+        (d / ".records" / "t1").mkdir(parents=True)
+        (d / "kw-run.json").write_text("{}", encoding="utf-8")
+        (d / "scorecard.json").write_text(json.dumps({"harness": "pi", "model": "x", "suite": "developer", "tasks": [
+            {"id": "t1", "passed": True, "wall_seconds": 25.0, "judge": {"accuracy": 4}}]}), encoding="utf-8")
+        if model_s is not None:
+            (d / ".records" / "t1" / "result.json").write_text(
+                json.dumps({"telemetry": {"server": {"model_s": model_s}}}), encoding="utf-8")
+        sides.append(str(d))
+    assert compare.main(sides) == 0
+    assert "base 80% · 5 s outside; new —" in capsys.readouterr().out
+    # A run dir outside KW_EVAL_HOME, graded into the graded home: its own records are read.
+    run = tmp_path / "elsewhere" / "pi-x" / "c"
+    (run / ".records" / "t1").mkdir(parents=True)
+    (tmp_path / "graded" / "pi-x" / "c").mkdir()
+    (tmp_path / "graded" / "pi-x" / "c" / "scorecard.json").write_text(json.dumps({"tasks": [
+        {"id": "t1", "passed": True, "wall_seconds": 25.0, "judge": {}}]}), encoding="utf-8")
+    (run / "kw-run.json").write_text("{}", encoding="utf-8")
+    (run / ".records" / "t1" / "result.json").write_text(json.dumps({"telemetry": {"server": {"model_s": 10.0}}}),
+                                                          encoding="utf-8")
+    monkeypatch.setattr(compare, "GRADED", tmp_path / "graded")
+    assert compare.load(str(run))["tasks"]["t1"]["model_s"] == 10.0
+    assert compare.model_time([(10.0, 10.4), (None, 3.0)]) == {"share": 1.04, "median_outside_s": 0.0, "tasks": 1}

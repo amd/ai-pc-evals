@@ -38,7 +38,21 @@ def test_counter_deltas_give_tokens_and_speeds(monkeypatch):
     assert server["pid"] == 4321 and why is None
     block = telemetry.server_block(server, before, telemetry.read_counters(8080), None)
     assert block == {"kind": "llama-server", "port": 8080, "model": "Qwen3.8-27B.gguf", "tokens_in": 9120,
-                     "tokens_out": 972, "prefill_tok_s": 912.0, "decode_tok_s": 24.3, "reason": None}
+                     "tokens_out": 972, "prefill_tok_s": 912.0, "decode_tok_s": 24.3, "prefill_s": 10.0,
+                     "decode_s": 40.0, "model_s": 50.0, "reason": None}
+
+
+def test_model_time_is_the_servers_busy_share_of_the_tasks_wall_time():
+    block = {"server": {"kind": "llama-server", "model_s": 41.2, "prefill_tok_s": 912.0, "decode_tok_s": 24.3}}
+    assert telemetry.add_model_share(block, 48.4)["server"]["model_share"] == 0.851
+    assert ("model time", "41 s of 48 s (85%), 7 s outside the model") in telemetry.fields(block, 48.4)
+    assert [k for k, _ in telemetry.fields(block)][:3] == ["prefill", "decode", "vram peak"]  # no wall: no line
+    # Requests sent at once each add their own seconds: over 100% says why, and nothing is negative.
+    assert telemetry.model_time(50.0, 48.0) == ("50 s of 48 s (104%: requests sent at once each count their own "
+                                                "time), 0 s outside the model")
+    unknown = {"server": {"kind": None, "model_s": None, "reason": "no model server found"}}
+    assert telemetry.add_model_share(unknown, 30.0)["server"]["model_share"] is None
+    assert ("model time", "n/a") in telemetry.fields(unknown, 30.0)
 
 
 def test_no_metrics_or_no_server_is_null_with_a_reason_never_zero(monkeypatch):
@@ -164,7 +178,8 @@ def test_vllm_counts_computed_prompt_tokens_and_reads_its_phase_histograms(monke
     # 15066 prompt tokens, 12480 of them prefix-cache hits; the same as the requests' usage and the server's
     # prompt_tokens_by_source{source="local_compute"}. The speeds match the client's: decode 103.5 tok/s.
     assert block == {"kind": "vllm", "port": 8000, "model": "Qwen3-0.6B", "tokens_in": 2586, "tokens_out": 1442,
-                     "prefill_tok_s": 13374.9, "decode_tok_s": 103.4, "reason": None}
+                     "prefill_tok_s": 13374.9, "decode_tok_s": 103.4, "prefill_s": 0.2, "decode_s": 13.9,
+                     "model_s": 14.1, "reason": None}
 
 
 def test_sglang_sums_label_sets_and_a_cache_counter_not_there_yet_is_zero(monkeypatch):

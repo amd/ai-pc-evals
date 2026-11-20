@@ -241,7 +241,7 @@ def server_block(server: Optional[Dict[str, Any]], before: Optional[Dict[str, fl
                            "model": Path(str(server["model"]).replace("\\", "/")).name
                            if server and server.get("model") else None,
                            "tokens_in": None, "tokens_out": None, "prefill_tok_s": None, "decode_tok_s": None,
-                           "reason": reason}
+                           "prefill_s": None, "decode_s": None, "model_s": None, "reason": reason}
     if reason:
         return out
     if after is None or before is None or kind not in SOURCES:
@@ -267,6 +267,11 @@ def server_block(server: Optional[Dict[str, Any]], before: Optional[Dict[str, fl
         out["tokens_in"] = int(round(d["tokens_in"]))
     if d["tokens_out"] is not None:
         out["tokens_out"] = int(round(d["tokens_out"]))
+    for secs in ("prefill_s", "decode_s"):  # the server's busy time: what the agent waited on the model
+        if d[secs] is not None:
+            out[secs] = round(d[secs], 1)
+    if d["prefill_s"] is not None and d["decode_s"] is not None:
+        out["model_s"] = round(d["prefill_s"] + d["decode_s"], 1)
     for name, tokens, secs, idle in (("prefill_tok_s", "tokens_in", "prefill_s", "prefill: no prompt tokens processed"),
                                      ("decode_tok_s", "tokens_out", "decode_s", "decode: no tokens generated")):
         if d[tokens] is None or d[secs] is None:
@@ -1100,6 +1105,26 @@ class Telemetry:
         return self.block
 
 
+def add_model_share(block: Dict[str, Any], wall_s: Optional[float]) -> Dict[str, Any]:
+    """Set the server block's ``model_share``: its ``model_s`` over the task's wall time. It can pass 1: the counters
+    cover the telemetry window, a little longer than the task, and requests sent at once each add their own time."""
+    s = block.get("server")
+    if isinstance(s, dict):
+        s["model_share"] = (round(s["model_s"] / wall_s, 3)
+                            if s.get("model_s") is not None and wall_s and wall_s > 0 else None)
+    return block
+
+
+def model_time(model_s: Optional[float], wall_s: Optional[float]) -> Optional[str]:
+    """``41 s of 48 s (85%), 7 s outside the model``, or None when either is unknown."""
+    if model_s is None or not wall_s or wall_s <= 0:
+        return None
+    share = model_s / wall_s
+    why = ": requests sent at once each count their own time" if share > 1.005 else ""
+    return (f"{model_s:.0f} s of {wall_s:.0f} s ({share:.0%}{why}), "
+            f"{max(wall_s - model_s, 0):.0f} s outside the model")
+
+
 def line(block: Dict[str, Any]) -> str:
     """``telemetry: prefill 912 tok/s, decode 24.3 tok/s, peak VRAM 22.4 GB, util 71%, 210 W``."""
     s, g = block.get("server") or {}, block.get("gpu") or {}
@@ -1125,8 +1150,9 @@ def line(block: Dict[str, Any]) -> str:
     return "telemetry: " + ", ".join(bits) + (f" ({'; '.join(notes)})" if notes else "")
 
 
-def fields(block: Dict[str, Any]) -> List[Tuple[str, str]]:
-    """The same as line(), as (key, value) pairs for a key: value console block."""
+def fields(block: Dict[str, Any], wall_s: Optional[float] = None) -> List[Tuple[str, str]]:
+    """The same as line(), as (key, value) pairs for a key: value console block; with the task's *wall_s*, also
+    how much of it the model server was busy."""
     s, g, f = block.get("server") or {}, block.get("gpu") or {}, block.get("faults") or {}
 
     def val(x: Optional[float], fmt: str, unit: str) -> str:
@@ -1135,6 +1161,8 @@ def fields(block: Dict[str, Any]) -> List[Tuple[str, str]]:
     out = [("prefill", val(s.get("prefill_tok_s"), "{:.0f}", " tok/s")),
            ("decode", val(s.get("decode_tok_s"), "{:.1f}", " tok/s")),
            ("vram peak", val(g.get("vram_peak_gb"), "{:.1f}", " GB"))]
+    if wall_s is not None:
+        out.insert(2, ("model time", model_time(s.get("model_s"), wall_s) or "n/a"))
     if g.get("shared_peak_gb") is not None:
         out.append(("shared peak", f"{g['shared_peak_gb']:.1f} GB"))
     out.append(("gpu util", val(g.get("util_mean_pct"), "{:.0f}", "%")))
