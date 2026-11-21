@@ -3,6 +3,13 @@
 Each release's section is published as its GitHub release notes (`tools/release_notes.py`). Every result
 records the version and task fingerprint that produced it (`python tools/evalversion.py`).
 
+## Unreleased
+
+### Fixes
+
+- **A timer the agent user enabled is contained even when the time cap stopped its systemd manager** ([#131](https://github.com/amd/ai-pc-evals/issues/131)). On Linux Layer 4, a task that ran past its cap had every process of the agent user killed, its systemd user manager too, so the runner could no longer list that user's timers: on Ubuntu 26.04 the task said "not checked", on 24.04 nothing at all, and a timer the agent had enabled stayed linked and fired the next time the manager started (at boot when the user lingers). The runner now also reads, from disk, what a user manager starts with it: the links in the `.wants`, `.requires` and `.upholds` folders under `~/.config/systemd/user`, `~/.config/systemd/user.control` and `~/.local/share/systemd/user`. A new one is moved aside into `~/.local/share/ai-pc-evals/disabled` (and its unit stopped when the manager answers), and recorded as `link: ~/<path>`; when the manager answers, a newly enabled timer or service is still reported as that unit, once. This also catches a unit the agent links by hand. The task fingerprint changes (`tools/schedules.py`); no task, input, key or prompt changes.
+- **A run folder given with `--out` is refused again on Ubuntu 26.04 when the agent user can write in its parent.** The check asked `test -w` as the agent user, and Ubuntu 26.04's `/usr/bin/test` (Rust coreutils) reads only a folder's mode bits, not its ACLs, so it said "not writable" to a folder the agent user may write through its ACL. The run went ahead, and the agent could have renamed the run folder away and put its own records in its place. The check now uses the shell's own `test`, which asks the kernel. The eval home was not affected (its sticky bits don't depend on this check). Only the runner changes (`tools/isolation.py`); the task fingerprint is unchanged by this fix.
+
 ## v0.7.3
 
 A patch over v0.7.2. New: a check for the local model server (`tools/check_server.py`, `run_eval.py --check-server`), the server's settings recorded with every task (with a warning when they change mid-run), and an Agreement table with optional charts in `results_tables.py`. Fixed: `--grade-only` honours `--exclude` and grades the rest when one task can't be rebuilt, and generated PDF inputs build to the same bytes under every zlib. The task fingerprint changes (`build_fixtures.py`): kw-06's receipt PDFs change bytes, no answer key does.

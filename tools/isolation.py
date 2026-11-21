@@ -780,7 +780,10 @@ def check_outside_parent(run_dir: Path, home: Path, user: str) -> None:
     if home == run_dir or home in run_dir.parents or parent.stat().st_mode & stat.S_ISVTX:
         return
     try:
-        done = subprocess.run(sudo(user, ["test", "-w", str(parent)]), capture_output=True, text=True,
+        # The shell's own test, which asks the kernel (ACLs included): the Rust coreutils test that Ubuntu 26.04
+        # installs as /usr/bin/test reads only the mode bits, so it says "not writable" to a folder the agent user
+        # may write through its ACL.
+        done = subprocess.run(sudo(user, ["sh", "-c", 'test -w "$1"', "kw", str(parent)]), capture_output=True, text=True,
                               errors="replace", timeout=STOP_SECONDS)
     except (OSError, subprocess.SubprocessError) as e:
         done = subprocess.CompletedProcess([], 2, "", str(e))
