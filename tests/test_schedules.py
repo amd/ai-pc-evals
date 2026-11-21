@@ -680,6 +680,7 @@ def test_posix_for_real_a_timer_left_when_the_time_cap_stops_the_agent_users_man
                 pytest.skip(f"the user manager isn't running and couldn't be started: sudo systemctl start {unit}")
         return schedules._user_manager(user)
 
+    was_running = subprocess.run(["systemctl", "is-active", "--quiet", unit], timeout=60).returncode == 0
     manager = start_manager()
     name = f"kw-test-cap-{uuid.uuid4().hex[:8]}"
     try:
@@ -698,8 +699,13 @@ def test_posix_for_real_a_timer_left_when_the_time_cap_stops_the_agent_users_man
         _as_user(user, manager, "systemctl", "--user", "disable", "--now", f"{name}.timer")
         _as_user(user, manager, "sh", "-c", 'rm -f "$HOME/.config/systemd/user/$1".service '
                  '"$HOME/.config/systemd/user/$1".timer '
-                 '"$HOME/.local/share/ai-pc-evals/disabled/.config/systemd/user/timers.target.wants/$1".timer', "kw", name)
+                 '"$HOME/.local/share/ai-pc-evals/disabled/.config/systemd/user/timers.target.wants/$1".timer; '
+                 'find "$HOME/.local/share/ai-pc-evals/disabled/.config" -depth -type d -empty -delete 2>/dev/null; '
+                 'rmdir "$HOME/.local/share/ai-pc-evals/disabled" "$HOME/.local/share/ai-pc-evals" 2>/dev/null; true',
+                 "kw", name)
         _as_user(user, manager, "systemctl", "--user", "daemon-reload")
+        if not was_running:  # as it was
+            subprocess.run(["sudo", "-n", "systemctl", "stop", unit], capture_output=True, timeout=60)
 
 
 # --- #64 review: what counts as a setting, the tool name, and the updater exemption --------------------------------

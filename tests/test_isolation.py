@@ -905,7 +905,8 @@ def test_posix_a_run_folder_outside_the_eval_home_whose_parent_the_agent_user_ca
     else:
         isolation.check_outside_parent(run_dir, tmp_path / "home", "kwagent")
     if not sticky_parent:  # asked as the agent user itself
-        assert calls == [["sudo", "-n", "-H", "-u", "kwagent", "--", "test", "-w", str(run_dir.parent)]]
+        assert calls == [["sudo", "-n", "-H", "-u", "kwagent", "--", "sh", "-c", 'test -w "$1"', "kw",
+                          str(run_dir.parent)]]
     monkeypatch.setattr(isolation.subprocess, "run",
                         lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "sudo: a password is required"))
     if not sticky_parent:
