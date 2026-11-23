@@ -111,7 +111,11 @@ class ClaudeCode(Agent):
         elif final.get("is_error"):
             error = f"{final.get('subtype', 'error')}: {final.get('api_error_status') or ''}".strip(": ")
             kind = "failed"
+        # error_max_turns: Claude Code's own turn limit, a budget like the time cap (base.ended()).
+        end = "out of steps" if error and final.get("subtype") == "error_max_turns" else ""
+        last = trace_mod.last_error(trace, stderr) if error else ""
         return AgentResult(
+            exit_code=None if timed_out else code, last_error=last, end=end,
             answer=answer or "",
             wall_seconds=round(wall, 1),
             # The requested model on every result, so one run never 'mixes models' when a task times out
