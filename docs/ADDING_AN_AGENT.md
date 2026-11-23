@@ -216,8 +216,11 @@ How to fill in `error` and `error_kind`:
 | Situation | `error` | `error_kind` | Counts as |
 |---|---|---|---|
 | Finished normally | `""` | `""` | graded |
-| Ran and failed: crashed, hit the time cap, exited non-zero | a short reason | `"failed"` | a fail |
+| Hit the time cap, or its own turn or step limit | a short reason | `"failed"` | a fail |
+| Crashed: exited non-zero, or its output says the run failed | a short reason | `"failed"` | graded on what it left |
 | Couldn't run at all: program missing, lost its connection to the model, started without the tools it should have | a short reason | `"unavailable"` | not measured (rerun it) |
+
+Also set `exit_code` (the process's exit code; leave it `None` after a time cap) and `last_error` (the agent's own last error from its log or trace, such as the model server's message, rather than "exited 1"; `trace.last_error()` finds it). The runner turns these into `result.json`'s `ended` ([RUNNING.md](RUNNING.md#how-the-agents-run-ended)). Set `end` only when your agent's output says more than its exit code: `"out of steps"` for its own turn limit.
 
 ### A skeleton
 

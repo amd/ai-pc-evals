@@ -147,8 +147,24 @@ def _over(text: str, trace: Trace, strict: bool = False) -> None:
             return
 
 
+def _opencode_error(err: Any, retries: int) -> str:
+    """The message of OpenCode's error event, as the model server sent it, with its HTTP status and OpenCode's
+    retries: 2.x puts it at error.message, 1.x at error.data.message; anything else is shown as JSON."""
+    if not isinstance(err, dict):
+        return str(err or "")
+    data = err.get("data") if isinstance(err.get("data"), dict) else {}
+    msg = err.get("message") if isinstance(err.get("message"), str) else data.get("message")
+    if not isinstance(msg, str) or not msg.strip():
+        return json.dumps(err, ensure_ascii=False)
+    status = err.get("status") or data.get("statusCode")
+    after = [f"HTTP {status}"] if isinstance(status, int) else []
+    after += [f"after {retries} retries"] if retries else []
+    return msg + (f" ({', '.join(after)})" if after else "")
+
+
 def _opencode(stdout: str) -> Trace:
     t = Trace("opencode")
+    retries = 0
     for ev in _lines(stdout):
         t.events += 1
         part = ev.get("part") if isinstance(ev.get("part"), dict) else {}
@@ -166,10 +182,12 @@ def _opencode(stdout: str) -> Trace:
             prompt = _int(tok.get("input")) + _int(cache.get("read")) + _int(cache.get("write"))
             if prompt:
                 t.prompts.append(prompt)
+        elif kind == "retry":  # a request OpenCode sends again (a 5xx from the model server); the error follows
+            retries += 1
         elif kind == "error":
             err = ev.get("error")
             msg = json.dumps(err, ensure_ascii=False) if isinstance(err, (dict, list)) else str(err or ev)
-            t.failure = " ".join(msg.split())[:300]
+            t.failure = " ".join(_opencode_error(err, retries).split())[:300] if err else " ".join(msg.split())[:300]
             _over(msg, t)
         elif kind in ("compaction", "session.compacted") or part.get("type") == "compaction":
             t.compactions += 1
@@ -363,6 +381,19 @@ def scan_stderr(trace: Trace, stderr: str) -> Trace:
     if not trace.compactions:
         trace.compactions = compacted
     return trace
+
+
+#: A log line that reports an error, for last_error(): an agent's stderr also holds warnings and progress.
+ERROR_LINE = re.compile(r"\b(error|exception|fatal|failed|traceback)\b", re.IGNORECASE)
+
+
+def last_error(trace: Trace, stderr: str) -> str:
+    """The agent's own last error: what its trace says the run failed with, else the last line of its stderr
+    that reports an error; "" when it logged none."""
+    if trace.failure:
+        return trace.failure
+    lines = [line.strip() for line in stderr.splitlines() if ERROR_LINE.search(line)]
+    return " ".join(lines[-1].split())[:300] if lines else ""
 
 
 def malformed(texts: Iterable[str]) -> List[str]:
