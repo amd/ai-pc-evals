@@ -12,7 +12,7 @@ from __future__ import annotations
 import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 from ._support import clip
 
@@ -173,11 +173,11 @@ def _xlsx_eval():
     return sys.modules[name]
 
 
-def _hidden_columns(ws) -> set:
+def _hidden_columns(column_dimensions) -> set:
     from openpyxl.utils import column_index_from_string  # noqa: PLC0415
 
     out = set()
-    for key, dim in ws.column_dimensions.items():
+    for key, dim in column_dimensions.items():
         if dim.hidden:
             lo = dim.min or column_index_from_string(key)
             hi = dim.max or lo
@@ -185,10 +185,109 @@ def _hidden_columns(ws) -> set:
     return out
 
 
+def _scan_sheet(wb, ws) -> Dict[str, Any]:
+    """One streamed pass over a read-only worksheet's XML that gives what xlsx_text used to read from the sheet
+    fully loaded twice (openpyxl's normal mode, formulas and cached values): its size, formula count, hidden rows
+    and columns, and the first XLSX_ROWS x XLSX_COLS cells with each formula's cached value. Memory grows with
+    those cells and the sheet's formula count (8 bytes a formula), not with every cell of a large sheet.
+
+    It parses with openpyxl's own sheet parser (the one both modes use), so every value is the one a fully loaded
+    workbook holds, and repeats what a full load does around it: a merged range keeps only its top-left cell,
+    and merged ranges, hyperlinks and comments add cells to the sheet's size."""
+    from array import array  # noqa: PLC0415
+
+    from openpyxl.comments.comment_sheet import CommentSheet  # noqa: PLC0415
+    from openpyxl.packaging.relationship import get_dependents, get_rels_path  # noqa: PLC0415
+    from openpyxl.utils.cell import range_boundaries  # noqa: PLC0415
+    from openpyxl.worksheet._reader import WorkSheetParser  # noqa: PLC0415
+    from openpyxl.worksheet.dimensions import ColumnDimension, RowDimension  # noqa: PLC0415
+    from openpyxl.xml.constants import COMMENTS_NS  # noqa: PLC0415
+    from openpyxl.xml.functions import fromstring  # noqa: PLC0415
+
+    hidden_rows: set = set()
+
+    class Scan(WorkSheetParser):
+        def parse_row(self, row):
+            parsed = super().parse_row(row)
+            # A full load keeps every row's attributes; only whether the row is hidden is needed here.
+            attrs = self.row_dimensions.pop(str(self.row_counter), None)
+            if attrs is not None:
+                attrs.pop("s", None)
+                (hidden_rows.add if RowDimension(ws, **attrs).hidden else hidden_rows.discard)(self.row_counter)
+            return parsed
+
+        def parse_cell(self, element):
+            before = self.col_counter
+            cell = super().parse_cell(element)
+            if cell["data_type"] == "f" and cell["row"] <= XLSX_ROWS and cell["column"] <= XLSX_COLS:
+                # The value the data_only load gives this cell: Excel's saved result, if any.
+                after, self.col_counter, self.data_only = self.col_counter, before, True
+                try:
+                    cell["cached"] = super().parse_cell(element)["value"]
+                finally:
+                    self.col_counter, self.data_only = after, False
+            return cell
+
+    max_row = max_col = 0
+    grid: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    formula_rows, formula_cols = array("i"), array("i")
+    styles = wb._cell_styles  # pylint: disable=protected-access
+    with wb._archive.open(ws._worksheet_path) as src:  # pylint: disable=protected-access
+        parser = Scan(src, ws._shared_strings, data_only=False, epoch=wb.epoch,  # pylint: disable=protected-access
+                      date_formats=wb._date_formats,  # pylint: disable=protected-access
+                      timedelta_formats=wb._timedelta_formats)  # pylint: disable=protected-access
+        for _, cells in parser.parse():
+            for cell in cells:
+                r, c = cell["row"], cell["column"]
+                styles[cell["style_id"]]  # pylint: disable=pointless-statement  # a full load fails on a bad style
+                if r > max_row:
+                    max_row = r
+                if c > max_col:
+                    max_col = c
+                if cell["data_type"] == "f":
+                    formula_rows.append(r)
+                    formula_cols.append(c)
+                if r <= XLSX_ROWS and c <= XLSX_COLS:
+                    grid[(r, c)] = cell
+    merges = [range_boundaries(m.ref) for m in parser.merged_cells.mergeCell] if parser.merged_cells else []
+    refs = [link.ref for link in parser.hyperlinks.hyperlink]
+    archive = wb._archive  # pylint: disable=protected-access
+    rels_path = get_rels_path(ws._worksheet_path)  # pylint: disable=protected-access
+    if rels_path in archive.namelist():
+        for rel in get_dependents(archive, rels_path).find(COMMENTS_NS):
+            refs += [ref for ref, _ in CommentSheet.from_tree(fromstring(archive.read(rel.target))).comments]
+    for lo_col, lo_row, hi_col, hi_row in merges + [range_boundaries(ref) for ref in refs]:
+        max_row = max(max_row, hi_row or lo_row or 0)
+        max_col = max(max_col, hi_col or lo_col or 0)
+    formulas = len(formula_rows)
+    if merges:
+        def merged_away(r: int, c: int) -> bool:
+            return any(lc <= c <= hc and lr <= r <= hr and (r, c) != (lr, lc) for lc, lr, hc, hr in merges)
+
+        top, bottom = min(m[1] for m in merges), max(m[3] for m in merges)
+        formulas -= sum(1 for r, c in zip(formula_rows, formula_cols) if top <= r <= bottom and merged_away(r, c))
+        grid = {key: cell for key, cell in grid.items() if not merged_away(*key)}
+    columns = {
+        key: ColumnDimension(ws, **{k: v for k, v in cd.items() if k != "style"})
+        for key, cd in parser.column_dimensions.items()
+    }
+    return {"max_row": max_row or 1, "max_col": max_col or 1, "empty": not max_row, "formulas": formulas,
+            "grid": grid, "hidden_rows": hidden_rows, "hidden_cols": _hidden_columns(columns)}
+
+
 def xlsx_text(path: Path) -> str:
     openpyxl = _need("openpyxl", "openpyxl")
-    formulas_wb = openpyxl.load_workbook(str(path), data_only=False)
-    values_wb = openpyxl.load_workbook(str(path), data_only=True)
+    # Read-only: the workbook's cells are streamed sheet by sheet (_scan_sheet), never all held at once.
+    wb = openpyxl.load_workbook(str(path), read_only=True)
+    try:
+        return _xlsx_text(path, wb)
+    finally:
+        wb.close()
+
+
+def _xlsx_text(path: Path, wb) -> str:
+    from openpyxl.utils import get_column_letter  # noqa: PLC0415
+
     charts = _zip_count(path, "xl/charts/chart")
     pivots = _zip_count(path, "xl/pivotTables/")
     sheets, total_formulas = [], 0
@@ -218,20 +317,29 @@ def xlsx_text(path: Path) -> str:
             value = int(value)
         return "" if value is None else str(value)
 
-    for ws in formulas_wb.worksheets:
-        values = values_wb[ws.title]
-        formulas = sum(1 for row in ws.iter_rows() for c in row if c.data_type == "f")
+    for ws in wb.worksheets:
+        try:
+            scan = _scan_sheet(wb, ws)
+        except ValueError as exc:  # worded as a full load words it
+            raise ValueError(
+                f"Unable to read workbook: could not read worksheets from {path}.\n"
+                "This is most probably because the workbook source files contain some invalid XML.\n"
+                "Please see the exception for more details."
+            ) from exc
+        formulas, max_row, max_col = scan["formulas"], scan["max_row"], scan["max_col"]
+        if max_row > 1048576:  # more rows than Excel allows: a full load failed here, filling the sheet in
+            raise ValueError("Row numbers must be between 1 and 1048576. Row number supplied was 1048577")
         total_formulas += formulas
-        hidden_cols = _hidden_columns(ws)
+        hidden_cols = scan["hidden_cols"]
         state = "" if ws.sheet_state == "visible" else f" [hidden sheet: {ws.sheet_state}]"
+        # A full load's range ran from A1 (counting formulas filled the sheet in from A1).
+        dimensions = "A1:A1" if scan["empty"] else f"A1:{get_column_letter(max_col)}{max_row}"
         lines = [
-            f"## Sheet {ws.title!r}{state}: {ws.dimensions}, {ws.max_row} rows x "
-            f"{ws.max_column} cols, {formulas} formulas"
+            f"## Sheet {ws.title!r}{state}: {dimensions}, {max_row} rows x "
+            f"{max_col} cols, {formulas} formulas"
         ]
-        hidden_rows = sorted(r for r, d in ws.row_dimensions.items() if d.hidden)
+        hidden_rows = sorted(scan["hidden_rows"])
         if hidden_cols or hidden_rows:
-            from openpyxl.utils import get_column_letter  # noqa: PLC0415
-
             lines.append(
                 "[hidden: "
                 + "; ".join(
@@ -244,14 +352,13 @@ def xlsx_text(path: Path) -> str:
                 )
                 + "; a reader of the sheet does not see them]"
             )
-        for r, row in enumerate(
-            ws.iter_rows(max_row=XLSX_ROWS, max_col=XLSX_COLS), start=1
-        ):
+        for r in range(1, XLSX_ROWS + 1):
             cells = []
-            for c, cell in enumerate(row, start=1):
-                value = cell.value
-                if cell.data_type == "f":
-                    cached = values.cell(row=r, column=c).value
+            for c in range(1, XLSX_COLS + 1):
+                cell = scan["grid"].get((r, c))
+                value = None if cell is None else cell["value"]
+                if cell is not None and cell["data_type"] == "f":
+                    cached = cell["cached"]
                     shown = computed(ws.title, r, c) if cached is None or recalc else cached
                     value = f"{getattr(value, 'text', value)} -> {shown}"  # an array formula's text
                 text = "" if value is None else str(value)
@@ -259,13 +366,13 @@ def xlsx_text(path: Path) -> str:
                     text = f"[hidden] {text}"
                 cells.append(text)
             if any(cells):
-                prefix = "[hidden row] " if ws.row_dimensions[r].hidden else ""
+                prefix = "[hidden row] " if r in scan["hidden_rows"] else ""
                 lines.append(prefix + " | ".join(cells).rstrip(" |"))
-        if ws.max_row > XLSX_ROWS:
-            lines.append(f"...[{ws.max_row - XLSX_ROWS} more rows]")
+        if max_row > XLSX_ROWS:
+            lines.append(f"...[{max_row - XLSX_ROWS} more rows]")
         sheets.append("\n".join(lines))
     head = (
-        f"[{len(formulas_wb.worksheets)} sheets, {total_formulas} formulas, "
+        f"[{len(wb.worksheets)} sheets, {total_formulas} formulas, "
         f"{charts} charts, {pivots} pivot tables]"
     )
     return "\n\n".join([head, *sheets])

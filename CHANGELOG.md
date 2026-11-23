@@ -3,6 +3,12 @@
 Each release's section is published as its GitHub release notes (`tools/release_notes.py`). Every result
 records the version and task fingerprint that produced it (`python tools/evalversion.py`).
 
+## Unreleased
+
+### Fixes
+
+- **Grading a large .xlsx deliverable no longer loads the whole workbook, twice** ([#150](https://github.com/amd/ai-pc-evals/issues/150)). The judge's view of a workbook (`kwengine/extract.py`, `xlsx_text`) loaded it in full twice with openpyxl (formulas and saved results), and then counted formulas over every cell: a 113 MB `flight_report.xlsx` took one grading process to about 17 GB. It now opens the workbook read-only and streams each sheet once, keeping only the first 25 rows by 20 columns the judge sees and a count of the rest. The judge gets the same text, byte for byte (`tests/test_xlsx_extract_identity.py` compares it with the old full load on workbooks with formulas with and without saved results, hidden sheets, rows and columns, array formulas, merged ranges, and xlsxwriter's recalculate-on-load files). A workbook whose shown formulas have no saved result (openpyxl saves none) is still loaded in full by the formula evaluator, as before. No task, input, key, probe or score changes, but the task fingerprint changes (`kwengine/extract.py`).
+
 ## v0.7.3
 
 A patch over v0.7.2. New: a check for the local model server (`tools/check_server.py`, `run_eval.py --check-server`), the server's settings recorded with every task (with a warning when they change mid-run), and an Agreement table with optional charts in `results_tables.py`. Fixed: `--grade-only` honours `--exclude` and grades the rest when one task can't be rebuilt, and generated PDF inputs build to the same bytes under every zlib. The task fingerprint changes (`build_fixtures.py`): kw-06's receipt PDFs change bytes, no answer key does.
