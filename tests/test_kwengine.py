@@ -1052,6 +1052,33 @@ def test_grade_writes_the_scorecard(tmp_path, monkeypatch):
     assert ft.summarize(card)["quality"] == 4.6
 
 
+def test_the_probe_libraries_are_requirements_that_import_with_the_probes_flags(monkeypatch):
+    listed = {re.split(r"[<>=;\s]", line, maxsplit=1)[0].lower()
+              for line in (REPO / "requirements.txt").read_text(encoding="utf-8").splitlines() if line[:1].isalpha()}
+    assert {"openpyxl", "python-docx", "python-pptx"} <= set(grade.PROBE_LIBRARIES) <= listed
+    monkeypatch.setattr(grade, "_LIBRARIES_OK", set())
+    grade.check_probe_libraries()  # this interpreter, with -I: it has requirements.txt installed
+
+
+def test_grading_stops_before_any_probe_when_the_probes_python_lacks_a_library(tmp_path, monkeypatch):
+    # #153: a package only in the user site-packages imports everywhere but in an isolated (-I) probe.
+    run_dir = _prepared(tmp_path)
+    (run_dir / SMOKE / "summary.md").write_text(GOOD_SUMMARY)
+    _record(run_dir)
+    sent, probes = [], []
+    _fake_judge(monkeypatch, sent=sent)
+    monkeypatch.setattr(grade, "run_probe", lambda *a, **k: probes.append(a) or (True, "probe ok"))
+    monkeypatch.setattr(grade, "PROBE_LIBRARIES", ("openpyxl", "python-kw-no-such-module"))
+    monkeypatch.setattr(grade, "_LIBRARIES_OK", set())
+    with pytest.raises(grade.ProbeSetupError) as caught:
+        grade.grade_run(run_dir, "judge-model", {})
+    why = str(caught.value)
+    assert "python-kw-no-such-module" in why and "openpyxl" not in why.split(" with the probes' flags")[0]
+    assert "user site-packages" in why and "python3 -m venv .venv" in why and "Nothing was graded" in why
+    assert probes == [] and sent == [] and not (run_dir / "scorecard.json").exists()
+    assert isinstance(caught.value, RuntimeError)  # `kwengine grade` prints it and exits 2
+
+
 def test_the_judge_runs_bare_only_with_an_api_key(monkeypatch):
     monkeypatch.setattr(ft.shutil, "which", lambda name: "/bin/claude")
     assert "--bare" not in ft.judge_command("m", {})
