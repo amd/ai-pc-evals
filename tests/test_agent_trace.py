@@ -461,3 +461,27 @@ def test_a_secret_in_a_tool_call_is_scrubbed_from_the_console_line_result_json_a
     result = (run_dir / ".records" / "verify-02" / "result.json").read_text(encoding="utf-8")
     assert "last call before the cap" not in result and secret not in result
     assert json.loads(result)["tool_health"]["last_call"].startswith("bash ")
+
+
+def test_an_unattended_agent_is_told_no_one_will_answer_and_a_manual_one_is_not(tmp_path, monkeypatch):
+    from agents.base import Agent, AgentResult
+
+    seen = {}
+
+    class Fake(Agent):
+        name = "fake"
+
+        def run(self, task, log_dir):
+            seen[self.manual] = task.prompt
+            return AgentResult(answer="ok", wall_seconds=1.0, model="m")
+
+    class Manual(Fake):
+        manual = True
+
+    for cls in (Fake, Manual):
+        monkeypatch.setattr(run_eval, "EVAL_HOME", tmp_path / f"home-{cls.manual}")
+        monkeypatch.setattr(run_eval, "get_agent", lambda name, model, cls=cls: cls("m"))
+        run_eval.run("fake", "m", "verify", ["verify-02"], tmp_path / f"out-{cls.manual}", tmp_path / "fx", "m",
+                     do_grade=False, measure=False)
+    assert seen[False].endswith(run_eval.UNATTENDED_NOTE)
+    assert run_eval.UNATTENDED_NOTE not in seen[True]
